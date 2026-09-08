@@ -1,4 +1,18 @@
-# helper（实验性）
+# 本机辅助程序
+
+## 飞书知识库剪存连接器
+
+`feishu_native_host.py` 是飞书内容剪存的本机连接器，通过 Native Messaging 调用 `lark-cli --as user`。`feishu_content_import.py` 负责内容块重建、图片暂存和上传、完整性核对。安装和授权说明见 [飞书知识库剪存](../docs/feishu-wiki-clip.md)。
+
+在项目根目录运行剪存页显示的命令：
+
+```bash
+python3 helper/install_feishu_native_host.py --extension-id <当前扩展ID>
+```
+
+连接器不需要 Python 第三方包，也不启动 HTTP 监听端口。下方历史微信实验与这项功能无关。
+
+## 微信历史页 helper（旧实验）
 
 这个目录保留的是旧的“微信客户端历史页抓取”实验方案。
 

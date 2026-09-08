@@ -1,0 +1,12 @@
+{
+  "name": "wechat-feishu-download",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "test:browser": "node tests/browser/feishu-extension.cjs && node tests/browser/feishu-recovery.cjs && npm run test:ui",
+    "test:ui": "node tests/browser/popup-ui.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

@@ -49,12 +49,8 @@ const workersEl = document.getElementById("jobWorkers");
 const elapsedEl = document.getElementById("jobElapsed");
 const resultSummaryEl = document.getElementById("resultSummary");
 const resultListEl = document.getElementById("resultList");
-const showResultDetailsButton = document.getElementById("showResultDetails");
 const resultActionsEl = document.getElementById("resultActions");
-const showWorkerDetailsButton = document.getElementById("showWorkerDetails");
-const showLogDetailsButton = document.getElementById("showLogDetails");
 const workerDetailsEl = document.getElementById("workerDetails");
-const logDetailsEl = document.getElementById("logDetails");
 const workerPanelEl = document.getElementById("workerPanel");
 const workerGridEl = document.getElementById("workerGrid");
 const logEl = document.getElementById("jobLog");
@@ -72,25 +68,6 @@ const stopTaskButton = createStopTaskButton();
 
 resultActionsEl?.prepend(stopTaskButton);
 retryObsidianWriteButton?.addEventListener("click", handleRetryObsidianWrite);
-showResultDetailsButton?.addEventListener("click", () => {
-  if (resultSummaryEl?.hidden === false) {
-    resultSummaryEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    return;
-  }
-  logDetailsEl?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-});
-showWorkerDetailsButton?.addEventListener("click", () => {
-  if (workerDetailsEl) {
-    workerDetailsEl.open = true;
-    workerDetailsEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }
-});
-showLogDetailsButton?.addEventListener("click", () => {
-  if (logDetailsEl) {
-    logDetailsEl.open = true;
-    logDetailsEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }
-});
 
 function createStopTaskButton() {
   const button = document.createElement("button");
@@ -110,7 +87,7 @@ function handleStopTask() {
 
   stopRequested = true;
   setStopTaskActive(true);
-  setStatus("正在停止任务，已打开的通道会尽快关闭。", "error");
+  setStatus("正在停止任务，请稍候…", "error");
   appendLog("已请求停止任务：不再领取后续任务，并关闭当前通道。", "error");
   closeActiveTaskTabs();
 }
@@ -137,6 +114,7 @@ function closeActiveTaskTabs() {
 }
 
 init().catch((error) => {
+  metaEl.textContent = "";
   setStatus(error.message || "任务初始化失败", "error");
   appendLog(error.message || "任务初始化失败", "error");
 });
@@ -144,17 +122,18 @@ init().catch((error) => {
 async function init() {
   const jobId = new URL(location.href).searchParams.get("jobId");
   if (!jobId) {
-    throw new Error("缺少任务 ID");
+    throw new Error("未找到下载任务，请从插件重新开始。");
   }
 
   const job = await loadJob(jobId);
   if (!job) {
-    throw new Error("任务不存在或已失效");
+    throw new Error("下载任务已失效，请从插件重新开始。");
   }
 
   cachedObsidianBinding = await primeObsidianBinding();
 
   const totalCount = getJobTotal(job);
+  document.getElementById("jobStats").hidden = false;
   jobStartedAt = Date.now();
   titleEl.textContent = job.title || (job.type === "course-export" ? "专栏导出任务" : "批量下载任务");
   metaEl.textContent = buildMeta(job);
@@ -353,7 +332,8 @@ async function runCourseExportJob(job) {
   setWorkerCount(workerCount);
   initializeWorkerPanel(workerCount);
 
-  setStatus(`正在处理专栏，使用 ${workerCount} 个通道（${executionProfile.label}）。`, "loading");
+  setStatus("正在导出专栏…", "loading");
+  appendLog(`专栏处理配置：${workerCount} 个通道（${executionProfile.label}）。`);
 
   if (scysCourseId) {
     await runScysCourseApiExport(scysCourseId);
@@ -535,7 +515,7 @@ async function runCourseExportJob(job) {
         completedCount += 1;
         updateStats(completedCount, successCount, failureCount, totalCount);
         if (completedCount < totalCount) {
-          setStatus(`正在处理专栏，已完成 ${completedCount}/${totalCount} 章（${executionProfile.label}）。`, "loading");
+          setStatus(`正在导出专栏，已处理 ${completedCount}/${totalCount} 章。`, "loading");
         } else {
           setWorkerState(0, "收尾中", "等待汇总输出");
         }
@@ -632,7 +612,7 @@ async function runCourseExportJob(job) {
         completedCount += 1;
         updateStats(completedCount, successCount, failureCount, totalCount);
         if (completedCount < totalCount) {
-          setStatus(`正在处理专栏，已完成 ${completedCount}/${totalCount} 章（${executionProfile.label}）。`, "loading");
+          setStatus(`正在导出专栏，已处理 ${completedCount}/${totalCount} 章。`, "loading");
         } else {
           setWorkerState(workerIndex, "收尾中", "等待汇总输出");
         }
@@ -1536,16 +1516,16 @@ function removeJob(jobId) {
 function buildMeta(job) {
   const outputTarget = getJobOutputTargetState(job);
   if (job.type === "course-export") {
-    const profile = getCourseExportExecutionProfile(job);
-    return [
+    const pieces = [
       `共 ${getJobTotal(job)} 章`,
       job.courseTitle || "当前专栏",
-      job.includeImages === false ? "不带图" : "带图",
-      outputTarget.wantsDownload ? "单文件 Markdown" : "不下载 Markdown",
-      outputTarget.wantsDownload ? "单文件 HTML" : "不下载 HTML",
-      outputTarget.label,
-      profile.workerCount > 1 ? `${profile.workerCount} 通道${profile.label}` : `单通道${profile.label}`
-    ].join(" | ");
+      job.includeImages === false ? "不含图片" : "包含图片"
+    ];
+    if (outputTarget.wantsDownload) {
+      pieces.push("Markdown + HTML");
+    }
+    pieces.push(outputTarget.label);
+    return pieces.join(" · ");
   }
 
   const pieces = [`共 ${job.links.length} 篇`];
@@ -1555,16 +1535,12 @@ function buildMeta(job) {
   if (job.dateRange?.startDate && job.dateRange?.endDate) {
     pieces.push(`${job.dateRange.startDate} ~ ${job.dateRange.endDate}`);
   }
-  pieces.push(job.includeImages === false ? "不带图" : "带图");
+  pieces.push(job.includeImages === false ? "不含图片" : "包含图片");
   if (outputTarget.wantsDownload) {
     pieces.push(job.zipOutput === false ? "逐篇下载" : "ZIP 打包");
-  } else {
-    pieces.push("不触发浏览器下载");
   }
   pieces.push(outputTarget.label);
-  pieces.push("串行稳态模式");
-  pieces.push("公众号直抓优先");
-  return pieces.join(" | ");
+  return pieces.join(" · ");
 }
 
 function startElapsedClock() {

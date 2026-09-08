@@ -1,0 +1,505 @@
+html,
+body {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  overflow-x: visible;
+}
+
+.clip-app {
+  width: 100%;
+  max-width: 744px;
+  min-width: 0;
+  margin: 0 auto;
+  padding: 36px 24px 40px;
+  gap: 16px;
+}
+
+.clip-app > *,
+.clip-app .advanced-content,
+.clip-app .field-group {
+  min-width: 0;
+}
+
+.clip-app .clip-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 0 0 8px;
+}
+
+.clip-header-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  border-radius: 12px;
+}
+
+.clip-app h1 {
+  font-size: 26px;
+  line-height: 1.35;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.clip-app .topbar-copy {
+  gap: 5px;
+}
+
+.clip-app .subtitle-inline {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.clip-app .workspace-panel {
+  padding: 24px;
+}
+
+.clip-app .panel-head {
+  margin-bottom: 10px;
+}
+
+.clip-app .panel-head h2 {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.clip-app .save-content-panel .panel-head h2 {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+}
+
+.clip-app .article-title {
+  margin: 0 0 12px;
+  color: var(--ui-text);
+  font-size: 21px;
+  font-weight: 650;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.clip-app .destination-section {
+  margin-top: 20px;
+  padding-top: 24px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.clip-app .destination-section .panel-head {
+  margin-bottom: 8px;
+}
+
+.clip-app .field-group {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.clip-app .field-label {
+  color: var(--ui-text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.clip-app .text-input {
+  min-width: 0;
+  min-height: 42px;
+  font-size: 13px;
+}
+
+.clip-app .text-input::placeholder {
+  color: var(--ui-text-muted);
+  opacity: 1;
+}
+
+.clip-app .hint {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.clip-app .status {
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.clip-app #targetSummary {
+  margin: 0 0 8px;
+}
+
+.clip-app #targetSummary.status-ready {
+  padding: 0;
+  color: var(--ui-text);
+  background: transparent;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.clip-app .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.clip-app .button {
+  max-width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-decoration: none;
+  text-align: center;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.clip-app .button-small {
+  min-height: 36px;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.clip-app .advanced-settings {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.clip-app .advanced-settings[open] {
+  background: transparent;
+}
+
+.clip-app .advanced-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 5px 0;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.65;
+  list-style: none;
+}
+
+.clip-app .advanced-summary::after {
+  content: "";
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  margin-right: 3px;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.clip-app details[open] > .advanced-summary::after {
+  transform: rotate(225deg);
+}
+
+.clip-app .advanced-summary:hover {
+  color: var(--ui-accent);
+}
+
+.clip-app .advanced-content {
+  display: grid;
+  gap: 12px;
+  padding: 12px 0 4px;
+}
+
+.clip-app #locationPicker {
+  margin-top: 4px;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 8px;
+}
+
+.clip-app #resolveTarget,
+.clip-app #loadSpaces,
+.clip-app #moreNodes,
+.clip-app #copyInstall {
+  justify-self: start;
+}
+
+.clip-app #connectionPanel {
+  padding: 18px 24px;
+}
+
+.clip-app #connectionPanel .panel-head {
+  margin-bottom: 6px;
+}
+
+.clip-app #connectionPanel .status {
+  margin: 0;
+}
+
+.clip-app #connectionPanel[data-state="connected"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 20px;
+  align-items: center;
+}
+
+.clip-app #connectionPanel[data-state="connected"] .panel-head {
+  margin-bottom: 0;
+}
+
+.clip-app #connectionPanel[data-state="connected"] .panel-head h2 {
+  color: var(--ui-success);
+  font-size: 13px;
+}
+
+.clip-app #connectionPanel[data-state="connected"] .status {
+  grid-column: 1;
+  padding: 0;
+  color: var(--ui-text-muted);
+  background: transparent;
+  font-size: 12px;
+}
+
+.clip-app #connectionPanel[data-state="connected"] .actions {
+  grid-column: 2;
+  grid-row: 1;
+  margin-top: 0;
+}
+
+.clip-app #connectionPanel[data-state="connected"] #refreshConnection {
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+
+.clip-app #authLink {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.clip-app #setup {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.clip-app .save-action-area {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.clip-app .save-button {
+  width: 100%;
+  min-height: 46px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.clip-app #saveFeedback {
+  margin: 0;
+}
+
+.clip-app #jobPanel .panel-head h2 {
+  font-size: 17px;
+}
+
+.clip-app #jobTitle,
+.clip-app #jobDetailStatus {
+  overflow-wrap: anywhere;
+}
+
+.clip-app #jobDetails {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.clip-app #resultLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.clip-app #endTask {
+  color: var(--ui-danger);
+}
+
+.clip-app .command {
+  display: block;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  color: var(--ui-text);
+  background: var(--ui-surface-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.clip-app .setup-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.clip-app .node-list {
+  display: grid;
+  gap: 6px;
+  max-height: 310px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.clip-app .node-list button {
+  width: 100%;
+  text-align: left;
+}
+
+.clip-app .node-list:empty::after {
+  content: "尚未加载页面，或此位置没有子页面。";
+  padding: 14px 0;
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.clip-app .steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.clip-app .steps li {
+  padding: 10px 0;
+  border-top: 2px solid var(--ui-border);
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.clip-app .steps li::before {
+  counter-increment: step;
+  content: counter(step) ". ";
+  font-variant-numeric: tabular-nums;
+}
+
+.clip-app .steps li[data-active="true"] {
+  border-color: var(--ui-accent);
+  color: var(--ui-accent);
+  font-weight: 600;
+}
+
+.clip-app .steps li[data-done="true"] {
+  border-color: var(--ui-success);
+  color: var(--ui-success);
+}
+
+.clip-app .clip-footer {
+  padding: 0 4px;
+}
+
+.clip-app [hidden] {
+  display: none !important;
+}
+
+@media (max-width: 560px) {
+  .clip-app {
+    padding: 24px 16px 32px;
+    gap: 14px;
+  }
+
+  .clip-app h1 {
+    font-size: 24px;
+  }
+
+  .clip-app .workspace-panel,
+  .clip-app #connectionPanel {
+    padding: 18px;
+  }
+
+  .clip-app .article-title {
+    font-size: 19px;
+  }
+
+  .clip-app .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 16px;
+  }
+}
+
+@media (max-width: 380px) {
+  .clip-app {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .clip-app .clip-header {
+    gap: 10px;
+  }
+
+  .clip-app .clip-header-icon {
+    flex-basis: 38px;
+    width: 38px;
+    height: 38px;
+  }
+
+  .clip-app h1 {
+    font-size: 22px;
+  }
+
+  .clip-app .workspace-panel,
+  .clip-app #connectionPanel {
+    padding: 16px;
+  }
+
+  .clip-app #connectionPanel[data-state="connected"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .clip-app #connectionPanel[data-state="connected"] .actions {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 8px;
+  }
+
+  .clip-app .actions .button {
+    flex: 1 1 auto;
+  }
+}
+
+.clip-app .save-content-panel:not([open]) {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.clip-app .save-content-panel[open] > #saveFormSummary:not([hidden]) {
+  margin-bottom: 16px;
+}
+
+.clip-app .save-action-area:has(#save[hidden]):not(:has(#saveFeedback:not([hidden]))) {
+  display: none;
+}

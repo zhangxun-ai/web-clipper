@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>剪存到飞书知识库</title>
+    <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="feishu-save.css">
+  </head>
+  <body>
+    <main class="app clip-app">
+      <header class="topbar clip-header">
+        <div class="clip-header-icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7"/><path d="M14 3v6h6L14 3Z"/><path d="M8 13h4M8 17h3m4 0h6m-3-3 3 3-3 3"/></svg>
+        </div>
+        <div class="topbar-copy">
+          <h1>保存到飞书</h1>
+        </div>
+      </header>
+
+      <section id="connectionPanel" class="panel workspace-panel" data-state="checking">
+        <div class="panel-head"><h2 id="connectionHeading">连接飞书</h2></div>
+        <p id="connectionStatus" class="status status-loading" role="status">正在恢复已有登录状态…</p>
+        <div class="actions">
+          <button id="connect" class="button button-primary" type="button" hidden>登录飞书</button>
+          <button id="finishAuth" class="button" type="button" hidden>已完成授权，继续</button>
+          <button id="refreshConnection" class="button" type="button">重新检测</button>
+        </div>
+        <a id="authLink" target="_blank" rel="noopener noreferrer" hidden>打开飞书授权页</a>
+        <details id="setup" class="advanced-settings" hidden>
+          <summary class="advanced-summary">首次连接说明</summary>
+          <div class="advanced-content">
+            <p class="hint">本机连接程序只需安装一次。已有飞书授权会自动复用并续期，后续无需每次登录。</p>
+            <ol class="setup-list">
+              <li>确认已安装并配置 <code>lark-cli</code>。<a href="https://github.com/larksuite/cli" target="_blank" rel="noopener noreferrer">官方安装说明</a></li>
+              <li>在此插件的项目目录打开终端，运行下方命令。Chrome 为默认浏览器，Dia 加 <code>--browser dia</code>，Edge 加 <code>--browser edge</code>，Chromium 加 <code>--browser chromium</code>。</li>
+            </ol>
+            <code id="installCommand" class="command"></code>
+            <button id="copyInstall" class="button button-small" type="button">复制安装命令</button>
+            <p class="hint">连接程序支持 macOS / Linux；Windows 暂未支持。安装后点击“重新检测”，会自动使用之前的授权；仅未登录、授权失效或需要新增权限时才显示登录入口。</p>
+          </div>
+        </details>
+      </section>
+
+      <section id="jobPanel" class="panel workspace-panel" aria-live="polite" hidden>
+        <div class="panel-head"><h2 id="jobHeading">正在保存</h2></div>
+        <p id="jobTitle" class="hint"></p>
+        <p id="jobStatus" class="status status-loading" role="status"></p>
+        <a id="resultLink" class="button button-primary" target="_blank" rel="noopener noreferrer" hidden>在飞书中打开</a>
+        <details id="jobDetails" class="advanced-settings">
+          <summary class="advanced-summary">查看处理详情</summary>
+          <div class="advanced-content">
+            <ol class="steps" id="steps">
+              <li data-stage="ready">读取图文</li><li data-stage="importing">写入并核对</li><li data-stage="moving">保存到知识库</li><li data-stage="complete">确认完成</li>
+            </ol>
+            <p id="jobDetailStatus" class="hint"></p>
+            <div class="actions">
+              <button id="resume" class="button" type="button" hidden>重试当前保存</button>
+              <a id="copyLink" class="button" target="_blank" rel="noopener noreferrer" hidden>查看暂存文档</a>
+              <button id="endTask" class="button" type="button" hidden>停止重试，保留暂存文档</button>
+            </div>
+            <p class="hint">临时连接异常会自动恢复，浏览器重新打开后会接着处理。其他文章可以照常保存，不受这篇文章的结果影响。</p>
+          </div>
+        </details>
+      </section>
+
+      <details id="saveForm" class="panel workspace-panel save-content-panel" open>
+        <summary id="saveFormSummary" class="advanced-summary" hidden>查看来源与保存位置</summary>
+        <div class="source-section">
+          <div class="panel-head"><h2>来源文章</h2></div>
+          <p id="sourceTitle" class="article-title">当前网页</p>
+          <details id="sourceSettings" class="advanced-settings">
+            <summary class="advanced-summary">文章链接</summary>
+            <div class="advanced-content">
+              <label class="field-label" for="sourceUrl">网页或飞书文档链接</label>
+              <input id="sourceUrl" class="text-input" type="url" placeholder="从文章页打开插件时自动填入" spellcheck="false">
+            </div>
+          </details>
+        </div>
+        <div class="destination-section">
+          <div class="panel-head"><h2>保存位置</h2></div>
+          <p id="targetSummary" class="status status-loading" role="status">选择一个父页面，后续保存会自动沿用。</p>
+          <details id="destinationSettings" class="advanced-settings">
+            <summary id="destinationSummary" class="advanced-summary">选择保存位置</summary>
+            <div class="advanced-content">
+              <div class="field-group">
+                <label class="field-label" for="targetUrl">父页面链接</label>
+                <input id="targetUrl" class="text-input" type="url" placeholder="https://…/wiki/…" spellcheck="false" aria-describedby="targetLinkHint">
+                <p id="targetLinkHint" class="hint">粘贴飞书知识库中的页面链接，文章将保存到此页下面。</p>
+                <button id="resolveTarget" class="button" type="button">使用此位置</button>
+              </div>
+              <details class="advanced-settings" id="locationPicker">
+                <summary class="advanced-summary">从我的知识库选择</summary>
+                <div class="advanced-content">
+                  <label class="field-label" for="spaces">知识库</label>
+                  <select id="spaces" class="text-input"><option value="">请先登录并加载知识库</option></select>
+                  <button id="loadSpaces" class="button" type="button">加载知识库</button>
+                  <p id="pickerPath" class="hint">选择知识库，再选择用来存放子文档的父页面。</p>
+                  <div class="actions">
+                    <button id="parentLevel" class="button button-small" type="button" disabled>返回上一级</button>
+                    <button id="useParent" class="button button-small" type="button" disabled>保存到此页下面</button>
+                  </div>
+                  <ul id="nodes" class="node-list" aria-label="知识库页面"></ul>
+                  <button id="moreNodes" class="button button-small" type="button" hidden>加载更多页面</button>
+                </div>
+              </details>
+              <p class="hint">新文档会继承父页面的访问权限。</p>
+            </div>
+          </details>
+        </div>
+        <div class="save-action-area">
+          <button id="save" class="button button-primary save-button" type="button" disabled>保存到飞书</button>
+          <p id="saveFeedback" class="status status-error" role="alert" hidden></p>
+          <p id="saveHint" class="hint">读取图文时请保持原网页打开，完成后会通知你。</p>
+        </div>
+      </details>
+
+      <footer class="clip-footer">
+        <details class="advanced-settings">
+          <summary class="advanced-summary">保存范围与格式</summary>
+          <div class="advanced-content">
+            <p class="hint">正文、标题、列表、普通表格和代码保存为飞书内容，图片独立上传。网页外观会适配飞书排版。</p>
+            <p class="hint">视频、音频和附件保留名称与链接；网页未提供直链时，保留回原文播放或下载的入口。</p>
+            <p class="hint">评论、网站导航和历史版本不包含在内。其他未支持的内容或图片读取失败会明确提示。</p>
+          </div>
+        </details>
+      </footer>
+    </main>
+    <script src="shared/feishu-wiki-clip.js"></script>
+    <script src="feishu-save.js" defer></script>
+  </body>
+</html>

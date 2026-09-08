@@ -3,73 +3,66 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>批量下载任务</title>
+    <title>批量导出任务</title>
+    <link rel="stylesheet" href="shared/ui-tokens.css">
     <link rel="stylesheet" href="batch-runner.css">
   </head>
   <body>
     <main class="app">
       <header class="hero">
-        <p class="eyebrow">TASK</p>
-        <h1 id="jobTitle">批量下载任务</h1>
+        <h1 id="jobTitle">批量导出任务</h1>
         <p id="jobMeta" class="subtitle">正在准备任务…</p>
       </header>
 
-      <section id="summaryPanel" class="panel summary-panel">
-        <div id="jobStatus" class="status status-loading">正在读取任务数据…</div>
+      <section id="summaryPanel" class="panel summary-panel" aria-label="任务概况">
+        <div id="jobStatus" class="status status-loading" role="status" aria-live="polite" aria-atomic="true">正在读取任务数据…</div>
 
-        <div id="obsidianRetryPanel" class="retry-panel" hidden>
-          <div class="panel-headline">Obsidian 重试</div>
-          <p id="obsidianRetryCopy" class="retry-copy">当前任务已导出完成，但写入 Obsidian 失败。</p>
-          <div class="retry-actions">
-            <button id="retryObsidianWrite" class="retry-button">授权并重试写入 Obsidian</button>
-          </div>
-        </div>
-
-        <div id="resultActions" class="result-actions">
-          <button id="showResultDetails" class="button button-subtle" type="button">查看导出结果</button>
-          <button id="showWorkerDetails" class="button button-subtle detailsToggle" type="button">查看并行通道</button>
-          <button id="showLogDetails" class="button button-subtle detailsToggle" type="button">查看详细日志</button>
-        </div>
-
-        <div id="resultSummary" class="result-summary" hidden>
-          <div class="panel-headline">导出结果</div>
-          <div id="resultList" class="result-list"></div>
-        </div>
-
-        <div class="stats">
-          <div class="stat-card">
-            <span class="stat-label">进度</span>
+        <div id="jobStats" class="stats" role="group" aria-label="导出进度" hidden>
+          <div class="stat-card stat-progress">
+            <span class="stat-label">已处理 / 总数</span>
             <span id="jobProgress" class="stat-value">0 / 0</span>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-success">
             <span class="stat-label">成功</span>
             <span id="jobSuccess" class="stat-value">0</span>
           </div>
-          <div class="stat-card">
+          <div class="stat-card stat-failure">
             <span class="stat-label">失败</span>
             <span id="jobFailure" class="stat-value">0</span>
           </div>
-          <div class="stat-card">
-            <span class="stat-label">通道</span>
-            <span id="jobWorkers" class="stat-value">-</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">耗时</span>
+          <div class="stat-card stat-secondary">
+            <span class="stat-label">已用时间</span>
             <span id="jobElapsed" class="stat-value">00:00</span>
           </div>
+        </div>
+
+        <div id="obsidianRetryPanel" class="retry-panel" hidden>
+          <h2 class="panel-headline">写入 Obsidian 未完成</h2>
+          <p id="obsidianRetryCopy" class="retry-copy">当前任务已导出完成，但写入 Obsidian 失败。</p>
+          <div class="retry-actions">
+            <button id="retryObsidianWrite" class="retry-button" type="button">授权并重试写入 Obsidian</button>
+          </div>
+        </div>
+
+        <div id="resultActions" class="result-actions"></div>
+
+        <div id="resultSummary" class="result-summary" hidden>
+          <h2 class="panel-headline">导出结果</h2>
+          <div id="resultList" class="result-list" tabindex="0" role="region" aria-label="导出结果列表"></div>
         </div>
       </section>
 
       <details id="workerDetails" class="panel detail-card" hidden>
-        <summary class="detail-toggle">并行通道</summary>
+        <summary class="detail-toggle">处理详情</summary>
         <div id="workerPanel" class="worker-panel" hidden>
+          <p id="jobWorkers" class="worker-meta">-</p>
           <div id="workerGrid" class="worker-grid"></div>
         </div>
       </details>
 
       <details id="logDetails" class="panel detail-card detail-card-log">
-        <summary class="detail-toggle">详细日志</summary>
-        <div id="jobLog" class="log" aria-live="polite"></div>
+        <summary class="detail-toggle">运行日志</summary>
+        <div id="jobLog" class="log" tabindex="0" role="region" aria-label="任务运行日志" aria-live="polite"></div>
       </details>
     </main>
 

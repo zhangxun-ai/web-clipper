@@ -136,7 +136,7 @@
     if (input.isWechatMpBackend) {
       return {
         headline: "公众号后台已就绪",
-        summary: "当前页已经是公众号后台，可直接切到“微信公众号”分类继续按日期范围批量下载。",
+        summary: "切到“微信公众号”分类，按日期下载同号文章。",
         primaryAction: {
           key: "focus-wechat-history",
           label: "打开后台模式"
@@ -148,7 +148,7 @@
     if (!input.isSupportedPage || !supportsMarkdown) {
       return {
         headline: "当前页暂不支持直接导出",
-        summary: "请先打开支持导出的页面，或切换顶部分类使用批量下载和后台模式。",
+        summary: "请先打开支持导出的页面，也可展开下方工具批量下载。",
         primaryAction: null,
         secondaryAction: null
       };
@@ -157,7 +157,7 @@
     if (input.canExportCourse) {
       return {
         headline: "当前页已就绪",
-        summary: "当前是课程章节页。你可以优先导出整个专栏，也可以只导出当前文档。",
+        summary: "优先导出整个专栏，也可仅保存当前章节。",
         primaryAction: {
           key: "export-course",
           label: "导出当前专栏"
@@ -172,7 +172,7 @@
     if (detectedCategory === "wechat") {
       return {
         headline: "当前页已就绪",
-        summary: "当前页面是公众号文章，可直接导出 Markdown，也可以切到“微信公众号”分类处理批量任务。",
+        summary: "支持导出公众号正文，或保存到飞书知识库。",
         primaryAction: {
           key: "export-markdown",
           label: "导出当前文章"
@@ -184,7 +184,7 @@
     if (detectedCategory === "feishu") {
       return {
         headline: "当前页已就绪",
-        summary: "当前页面支持飞书文档导出。",
+        summary: "支持导出飞书正文，或保存到自己的知识库。",
         primaryAction: {
           key: "export-markdown",
           label: "导出当前飞书文档"
@@ -196,7 +196,7 @@
     if (input.exportType === "google-docs") {
       return {
         headline: "当前页已就绪",
-        summary: "当前页面支持 Google 文档正文导出，内容将从文档原生导出结果读取。",
+        summary: "支持 Google 文档正文导出，下载为 Markdown。",
         primaryAction: {
           key: "export-markdown",
           label: "导出当前 Google 文档"
@@ -208,7 +208,7 @@
     if (detectedCategory === "other") {
       return {
         headline: "当前页已就绪",
-        summary: "当前页面支持网页正文导出 Markdown。",
+        summary: "导出网页正文为 Markdown，或保存到飞书。",
         primaryAction: {
           key: "export-markdown",
           label: "导出当前网页"

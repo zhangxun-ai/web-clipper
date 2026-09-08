@@ -24,7 +24,6 @@ const isScysPageUrl = (url) => {
 };
 const buildObsidianNoteFile = (payload) => obsidianExportApi.buildObsidianNoteFile?.(payload);
 const getPopupCategories = () => exportUiModels.getPopupCategories?.() || [];
-const getPopupPresets = () => exportUiModels.getPopupPresets?.() || [];
 const resolvePopupCategory = (value) => exportUiModels.resolvePopupCategory?.(value) || "other";
 const resolvePopupPresetState = (value) => exportUiModels.resolvePopupPresetState?.(value) || {
   key: "custom",
@@ -51,10 +50,8 @@ const maybeStripWechatUiNoiseFromMarkdown = (value) => {
 };
 
 const statusEl = document.getElementById("status");
-const primaryHeadlineEl = document.getElementById("primaryHeadline");
 const primarySummaryEl = document.getElementById("primarySummary");
 const detectedCategoryBadgeEl = document.getElementById("detectedCategoryBadge");
-const categorySummaryEl = document.getElementById("categorySummary");
 const titleEl = document.getElementById("docTitle");
 const typeEl = document.getElementById("docType");
 const primaryActionButton = document.getElementById("primaryAction");
@@ -96,6 +93,7 @@ const helperCheckButton = document.getElementById("helperCheck");
 const openWechatMpLoginButton = document.getElementById("openWechatMpLogin");
 const helperDownloadButton = document.getElementById("helperDownload");
 const helperLogEl = document.getElementById("helperLog");
+const openFeishuSaveButton = document.getElementById("openFeishuSave");
 const presetButtons = Array.from(document.querySelectorAll(".preset-card[data-preset]"));
 const categoryTabButtons = new Map(
   getPopupCategories().map((item) => [
@@ -146,6 +144,35 @@ presetButtons.forEach((button) => {
 });
 categoryTabButtons.forEach((button, key) => {
   button?.addEventListener("click", () => setActiveCategory(key));
+  button?.addEventListener("keydown", (event) => {
+    const tabs = [...categoryTabButtons.entries()].filter(([, tab]) => tab);
+    const index = tabs.findIndex(([category]) => category === key);
+    let next;
+    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+    if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = tabs.length - 1;
+    if (next === undefined) return;
+    event.preventDefault();
+    setActiveCategory(tabs[next][0]);
+    tabs[next][1].focus();
+  });
+});
+document.getElementById("openExportSettings")?.addEventListener("click", (event) => {
+  event.preventDefault();
+  focusElement(document.querySelector("#popupAdvancedSettings > summary"));
+});
+openFeishuSaveButton?.addEventListener("click", async () => {
+  try {
+    const [tab] = await queryActiveTab();
+    if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) throw new Error("请先打开要保存的文章网页。");
+    await injectContentScript(tab.id);
+    const url = new URL(chrome.runtime.getURL("feishu-save.html"));
+    url.searchParams.set("source", tab.url);
+    url.searchParams.set("sourceTabId", String(tab.id));
+    url.searchParams.set("requestId", crypto.randomUUID());
+    await chrome.tabs.create({ url: url.href });
+  } catch (error) { setStatus(error.message || "无法打开飞书剪存页。", "error"); }
 });
 
 async function init() {
@@ -161,6 +188,7 @@ async function init() {
   }
 
   activeTabId = tab.id;
+  if (openFeishuSaveButton) openFeishuSaveButton.disabled = !/^https?:\/\//i.test(tab.url || "");
   currentExportType = classifyExportUrl(tab.url || "");
   detectedCategory = resolvePopupCategory({
     exportType: currentExportType,
@@ -182,7 +210,7 @@ async function init() {
       supports: []
     };
     setPageMeta(pageInfo);
-    setStatus("当前是公众号后台页，可用于公众号历史范围下载。", "ready");
+    setStatus("可按日期下载公众号文章。", "ready");
     setButtonsDisabled(true);
   } else if (!tab.url || !isSingleExportUrl(tab.url)) {
     setPageMeta(null);
@@ -199,7 +227,7 @@ async function init() {
         setButtonsDisabled(true);
         setCourseExportAvailability(Boolean(tab.url && isScysCourseUrl(tab.url)), false);
       } else {
-        setStatus("页面已就绪，可以直接导出。", "ready");
+        setStatus("可以导出", "ready");
         setButtonsDisabled(false);
         setCourseExportAvailability(Boolean(tab.url && isScysCourseUrl(tab.url)), Boolean(tab.url && isScysCourseUrl(tab.url)));
       }
@@ -214,7 +242,7 @@ async function init() {
   if (isWechatArticleUrl(helperSeedUrlInput.value.trim())) {
     await refreshWechatMpStatus({ silent: true }).catch(() => null);
   } else {
-    setHelperStatus("请先粘贴公众号种子文章链接。", "loading");
+    helperStatusEl.hidden = true;
   }
 
   renderPrimarySurface();
@@ -238,9 +266,9 @@ async function handleExport(format) {
     }
   }
 
+  activeExportTask = createExportTask();
   setButtonsDisabled(true);
   setStatus(`正在导出 ${format.toUpperCase()}…`, "loading");
-  activeExportTask = createExportTask();
 
   try {
     const payload = await sendMessageToActivePage({
@@ -404,7 +432,7 @@ async function handleWechatHistoryDownload() {
   const endDate = String(helperEndDateInput.value || "").trim();
 
   if (!isWechatArticleUrl(seedUrl)) {
-    setHelperStatus("请输入微信公众号文章种子链接。", "error");
+    setHelperStatus("请粘贴该公众号任意一篇文章的链接。", "error");
     return;
   }
 
@@ -421,7 +449,7 @@ async function handleWechatHistoryDownload() {
   isWechatHistoryRunning = true;
   setHistoryControlsDisabled(true);
   clearHelperLog();
-  setHelperStatus("正在通过公众号后台登录态定位历史文章…", "loading");
+  setHelperStatus("正在查找历史文章…", "loading");
 
   try {
     const result = await resolveWechatHistoryInBackground(seedUrl, startDate, endDate);
@@ -481,8 +509,9 @@ async function handleOpenWechatMpLogin() {
 async function refreshWechatMpStatus({ silent = false } = {}) {
   const seedUrl = String(helperSeedUrlInput.value || "").trim();
   if (!isWechatArticleUrl(seedUrl)) {
-    const message = "请先粘贴公众号种子文章链接。";
+    const message = "请先粘贴一篇公众号文章链接。";
     setHelperStatus(message, "loading");
+    helperStatusEl.hidden = silent;
     if (!silent) {
       appendHelperLog(message);
     }
@@ -493,12 +522,12 @@ async function refreshWechatMpStatus({ silent = false } = {}) {
     const payload = await checkWechatMpLoginFromSeed(seedUrl);
     if (payload.loggedIn) {
       const accountName = payload.accountName ? `，账号 ${payload.accountName}` : "";
-      setHelperStatus(`已检测到公众号后台登录态${accountName}。`, "ready");
+      setHelperStatus(`已登录${accountName}。`, "ready");
       if (!silent) {
         appendHelperLog(`已检测到公众号后台登录态${accountName}。`, "success");
       }
     } else {
-      setHelperStatus("未检测到当前 Chrome 的公众号后台登录态。先点“打开后台登录页”登录一次。", "error");
+      setHelperStatus("尚未登录，请点击“打开公众号后台”完成登录。", "error");
       if (!silent) {
         appendHelperLog("当前 Chrome 里没有可用的 `mp.weixin.qq.com` 登录态。", "error");
       }
@@ -612,7 +641,7 @@ function injectContentScript(tabId, frameId = null) {
     chrome.scripting.executeScript(
       {
         target,
-        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "content-scripts/feishu-exporter.js"]
+        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "shared/web-feishu-blocks.js", "content-scripts/feishu-exporter.js"]
       },
       () => {
         if (chrome.runtime.lastError) {
@@ -977,8 +1006,8 @@ function setHistoryControlsDisabled(disabled) {
 }
 
 function setPageMeta(info) {
-  titleEl.textContent = info?.title || "-";
-  typeEl.textContent = info?.docType || "-";
+  titleEl.textContent = info?.title || "请先打开文章或文档";
+  typeEl.textContent = info?.docType || "暂无可导出的正文";
 }
 
 function setStatus(message, variant) {
@@ -988,16 +1017,19 @@ function setStatus(message, variant) {
 }
 
 function setBatchStatus(message, variant) {
+  batchStatusEl.hidden = false;
   batchStatusEl.textContent = message;
   batchStatusEl.className = `status status-${variant}`;
 }
 
 function setHelperStatus(message, variant) {
+  helperStatusEl.hidden = false;
   helperStatusEl.textContent = message;
   helperStatusEl.className = `status status-${variant}`;
 }
 
 function setObsidianStatus(message, variant) {
+  obsidianStatusEl.hidden = false;
   obsidianStatusEl.textContent = message;
   obsidianStatusEl.className = `status status-${variant}`;
 }
@@ -1068,21 +1100,21 @@ function renderPrimarySurface() {
     pageInfo
   });
 
-  if (primaryHeadlineEl) {
-    primaryHeadlineEl.textContent = primaryActionModel.headline || "当前页";
-  }
   if (primarySummaryEl) {
     primarySummaryEl.textContent = primaryActionModel.summary || "";
+    primarySummaryEl.hidden = primaryActionModel.primaryAction?.key === "export-markdown";
   }
   if (primaryActionButton) {
     const action = primaryActionModel.primaryAction;
     primaryActionButton.hidden = !action;
-    if (actionButtonsLocked && action) {
+    if (actionButtonsLocked && activeExportTask && action) {
       primaryActionButton.disabled = false;
       primaryActionButton.textContent = "停止导出";
       primaryActionButton.dataset.actionKey = "cancel-export";
     } else {
-      primaryActionButton.disabled = !action || (action.key === "export-course" && !courseExportEnabled);
+      primaryActionButton.disabled = !action
+        || (actionButtonsLocked && action.key !== "focus-wechat-history")
+        || (action.key === "export-course" && !courseExportEnabled);
       primaryActionButton.textContent = action?.label || "当前页暂不支持";
       primaryActionButton.dataset.actionKey = action?.key || "";
     }
@@ -1096,7 +1128,7 @@ function renderPrimarySurface() {
   }
   if (detectedCategoryBadgeEl) {
     const meta = getCategoryMeta(detectedCategory);
-    detectedCategoryBadgeEl.textContent = `已识别：${meta.label}`;
+    detectedCategoryBadgeEl.textContent = meta.label;
   }
   if (primaryHintEl) {
     const targetState = getActiveOutputTargetState();
@@ -1107,6 +1139,7 @@ function renderPrimarySurface() {
       hint += " 需要先配置 Obsidian 目标目录。";
     }
     primaryHintEl.textContent = hint;
+    primaryHintEl.hidden = !targetState.wantsObsidian;
   }
 }
 
@@ -1122,7 +1155,6 @@ function renderPresetUi() {
     outputTarget,
     includeImages: includeImagesInput.checked
   });
-  const presetMeta = new Map(getPopupPresets().map((item) => [item.key, item]));
 
   presetButtons.forEach((button) => {
     const key = button.dataset.preset || "";
@@ -1135,15 +1167,13 @@ function renderPresetUi() {
     return;
   }
 
+  presetSummaryEl.hidden = presetState.key !== "custom";
   if (presetState.key === "custom") {
-    presetSummaryEl.textContent = "当前组合来自“更多设置”，仍保留全部导出能力。";
+    presetSummaryEl.textContent = "自定义组合";
     return;
   }
 
-  const meta = presetMeta.get(presetState.key);
-  presetSummaryEl.textContent = meta?.description
-    ? `当前预设：${presetState.label} · ${meta.description}`
-    : `当前预设：${presetState.label}`;
+  presetSummaryEl.textContent = `已选：${presetState.label}`;
 }
 
 async function handlePresetSelection(presetKey) {
@@ -1226,15 +1256,10 @@ function renderCategoryTabs() {
     const selected = key === activeCategory;
     button.dataset.active = selected ? "true" : "false";
     button.setAttribute("aria-selected", selected ? "true" : "false");
+    button.tabIndex = selected ? 0 : -1;
+    if (selected) document.getElementById("categoryToolsPanel")?.setAttribute("aria-labelledby", button.id);
   });
 
-  if (categorySummaryEl) {
-    const detectedLabel = getCategoryMeta(detectedCategory).label;
-    const activeLabel = getCategoryMeta(activeCategory).label;
-    categorySummaryEl.textContent = detectedCategory === activeCategory
-      ? `已自动定位到“${detectedLabel}”分类。`
-      : `当前页归类为“${detectedLabel}”，你正在查看“${activeLabel}”工具区。`;
-  }
 }
 
 function renderBatchWorkspace() {
@@ -1249,15 +1274,15 @@ function renderBatchWorkspace() {
 
   if (activeCategory === "wechat") {
     batchWorkspaceTitleEl.textContent = "公众号文章批量下载";
-    batchWorkspaceSummaryEl.textContent = "粘贴多个公众号文章链接后，会打开独立任务页继续执行。";
+    batchWorkspaceSummaryEl.textContent = "任务将在新页面中执行。";
     batchLinksLabelEl.textContent = "公众号文章链接列表";
-    batchLinksInput.placeholder = "每行一个公众号文章链接。当前分类只会处理 mp.weixin.qq.com/s/... 链接。";
+    batchLinksInput.placeholder = "每行一个链接：https://mp.weixin.qq.com/s/…";
     batchDownloadLinksButton.textContent = "批量下载公众号文章";
   } else {
     batchWorkspaceTitleEl.textContent = "飞书文档批量下载";
-    batchWorkspaceSummaryEl.textContent = "粘贴多个飞书 docx/wiki 链接后，会打开独立任务页继续执行。";
+    batchWorkspaceSummaryEl.textContent = "任务将在新页面中执行。";
     batchLinksLabelEl.textContent = "飞书链接列表";
-    batchLinksInput.placeholder = "每行一个飞书 docx/wiki 链接。当前分类只会处理飞书文档链接。";
+    batchLinksInput.placeholder = "每行一个飞书 docx 或 wiki 链接。";
     batchDownloadLinksButton.textContent = "批量下载飞书文档";
   }
 }
@@ -1272,8 +1297,8 @@ function renderScysWorkspace() {
   }
 
   scysWorkspaceNoteEl.textContent = courseExportVisible
-    ? "当前已识别到生财课程章节。推荐优先导出整个专栏，必要时再单独导出当前章节。"
-    : "当前页不是生财课程章节。打开任一生财课程章节页后，这里会直接提供“导出当前专栏”。";
+    ? "已识别当前课程，可导出完整专栏或单篇章节。"
+    : "请先打开生财课程的任意章节，再使用专栏导出。";
   scysExportCourseButton.disabled = actionButtonsLocked || !courseExportEnabled;
   scysExportCurrentButton.disabled = actionButtonsLocked || !Boolean(pageInfo?.supports?.includes?.("markdown")) || detectedCategory !== "scys";
 }
@@ -1295,8 +1320,8 @@ function renderOtherWorkspace() {
 
   const supported = Boolean(pageInfo?.supports?.includes?.("markdown"));
   otherWorkspaceNoteEl.textContent = supported
-    ? "当前页是普通网页正文，上方主按钮可以直接导出 Markdown。"
-    : "当前页暂不支持直接导出。你仍可切换到其它分类使用对应的批量工具。";
+    ? "使用上方按钮导出正文，或保存到飞书知识库。"
+    : "请先打开文章页面；也可切换分类，粘贴链接批量下载。";
 }
 
 async function handlePrimaryAction() {
@@ -1361,6 +1386,7 @@ async function refreshObsidianBinding({ silent = false } = {}) {
     pickObsidianFolderButton.disabled = true;
     clearObsidianFolderButton.disabled = true;
     obsidianFolderEl.textContent = "当前环境不支持";
+    obsidianFolderEl.hidden = true;
     if (obsidianSummaryEl) {
       obsidianSummaryEl.textContent = "当前环境不支持";
     }
@@ -1375,11 +1401,13 @@ async function refreshObsidianBinding({ silent = false } = {}) {
   pickObsidianFolderButton.disabled = false;
 
   if (!binding) {
-    obsidianFolderEl.textContent = "-";
+    obsidianFolderEl.textContent = "";
+    obsidianFolderEl.hidden = true;
     if (obsidianSummaryEl) {
       obsidianSummaryEl.textContent = "尚未配置";
     }
     setObsidianStatus("尚未配置 Obsidian 目标目录。", silent ? "loading" : "error");
+    obsidianStatusEl.hidden = silent;
     renderPrimarySurface();
     return null;
   }
@@ -1387,12 +1415,14 @@ async function refreshObsidianBinding({ silent = false } = {}) {
   const folderName = String(binding.meta?.folderName || binding.handle?.name || "未命名目录");
   const permission = await obsidianVaultStorage.queryVaultPermission?.(binding.handle, "readwrite");
   obsidianFolderEl.textContent = folderName;
+  obsidianFolderEl.hidden = false;
   if (obsidianSummaryEl) {
-    obsidianSummaryEl.textContent = permission === "granted" ? folderName : `${folderName}（需重授）`;
+    obsidianSummaryEl.textContent = permission === "granted" ? "已连接" : "需要授权";
   }
 
   if (permission === "granted") {
     setObsidianStatus(`已连接到目标目录：${folderName}。`, "ready");
+    obsidianStatusEl.hidden = silent;
   } else {
     setObsidianStatus(`目录权限已失效：${folderName}。请重新授权。`, "error");
   }
@@ -1429,7 +1459,8 @@ async function handleClearObsidianFolder() {
   try {
     await obsidianVaultStorage.clearVaultBinding?.();
     obsidianBinding = null;
-    obsidianFolderEl.textContent = "-";
+    obsidianFolderEl.textContent = "";
+    obsidianFolderEl.hidden = true;
     if (obsidianSummaryEl) {
       obsidianSummaryEl.textContent = "尚未配置";
     }
@@ -1453,7 +1484,8 @@ async function ensureObsidianReadyIfNeeded() {
 
   const binding = await refreshObsidianBinding({ silent: true });
   if (!binding) {
-    setStatus("已启用 Obsidian 同步，但当前没有可写目录。请先在弹窗里重新授权。", "error");
+    setStatus("请先选择 Obsidian 目标目录，再使用此导出方式。", "error");
+    focusElement(pickObsidianFolderButton);
     return false;
   }
 
@@ -1464,7 +1496,8 @@ async function ensureObsidianReadyIfNeeded() {
   }
 
   if (permission !== "granted") {
-    setStatus("已启用 Obsidian 同步，但当前没有可写目录。请先在弹窗里重新授权。", "error");
+    setStatus("Obsidian 目录授权已失效，请重新授权后再导出。", "error");
+    focusElement(pickObsidianFolderButton);
     return false;
   }
 
@@ -1751,8 +1784,11 @@ function focusElement(element) {
     return;
   }
 
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === "DETAILS") parent.open = true;
+  }
   if (typeof element.scrollIntoView === "function") {
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    element.scrollIntoView({ behavior: "instant", block: "nearest" });
   }
   if (typeof element.focus === "function") {
     element.focus({ preventScroll: true });

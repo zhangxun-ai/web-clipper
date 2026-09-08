@@ -9,82 +9,57 @@
   <body>
     <main class="app">
       <header class="topbar">
-        <div class="topbar-copy">
-          <p class="eyebrow">LOCAL EXPORT</p>
-          <h1>文档本地导出</h1>
-          <p class="subtitle-inline">自动识别当前页面类型，直接落到对应工作台。</p>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h5M8 17h8"/></svg></span>
+          <div class="topbar-copy">
+            <h1>文档本地导出</h1>
+          </div>
         </div>
-        <div class="topbar-side">
-          <span id="detectedCategoryBadge" class="category-badge">识别中</span>
-          <a class="topbar-link" href="#popupAdvancedSettings">更多设置</a>
-        </div>
+        <a id="openExportSettings" class="topbar-link" href="#popupAdvancedSettings" aria-label="打开导出设置" title="导出设置"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></a>
       </header>
 
-      <section id="workspaceShell" class="panel workspace-shell">
-        <div class="panel-head panel-head-tight">
-          <h2>分类工作台</h2>
-          <p id="categorySummary" class="subtitle-inline">正在识别当前页面对应的工作台…</p>
-        </div>
-
-        <div class="category-tabs" role="tablist" aria-label="导出分类导航">
-          <button id="categoryTabWechat" class="category-tab" type="button" role="tab" aria-selected="false" data-category="wechat">微信公众号</button>
-          <button id="categoryTabFeishu" class="category-tab" type="button" role="tab" aria-selected="false" data-category="feishu">飞书</button>
-          <button id="categoryTabScys" class="category-tab" type="button" role="tab" aria-selected="false" data-category="scys">生财有术</button>
-          <button id="categoryTabOther" class="category-tab" type="button" role="tab" aria-selected="false" data-category="other">其它</button>
-        </div>
-
+      <section id="workspaceShell" class="panel workspace-shell" aria-label="当前页面导出">
         <div class="workspace-main">
-          <section class="surface-card">
-            <div id="status" class="status status-loading">正在检测当前页面…</div>
-
+          <section class="surface-card" aria-labelledby="docTitle">
+            <div id="status" class="status status-loading" role="status" aria-live="polite">正在检测当前页面…</div>
             <div class="surface-copy">
-              <div class="surface-copy-block">
-                <p class="surface-label">当前页主操作</p>
-                <h2 id="primaryHeadline">当前页</h2>
-                <p id="primarySummary" class="subtitle-inline">正在识别当前页面可执行的主操作…</p>
+              <h2 id="docTitle">正在读取文章标题…</h2>
+              <div class="source-meta">
+                <span id="docType" class="meta-value">正在识别类型</span>
+                <span id="detectedCategoryBadge" class="category-badge">识别中</span>
               </div>
-
-              <div class="meta meta-compact">
-                <div class="meta-row meta-row-inline">
-                  <span class="meta-label">标题</span>
-                  <span id="docTitle" class="meta-value">-</span>
-                </div>
-                <div class="meta-row meta-row-inline">
-                  <span class="meta-label">类型</span>
-                  <span id="docType" class="meta-value">-</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="actions">
-              <button id="primaryAction" class="button button-primary" type="button" disabled>导出当前页面</button>
-              <button id="secondaryAction" class="button" type="button" hidden disabled>更多操作</button>
+              <p id="primarySummary" class="subtitle-inline">正在检查可用的导出方式…</p>
             </div>
           </section>
 
-          <section class="surface-card preset-panel">
-            <div class="panel-head panel-head-tight">
-              <h2>导出预设</h2>
-              <p id="presetSummary" class="subtitle-inline">选择一个更贴近当前意图的默认组合。</p>
+          <section class="surface-card preset-panel" aria-labelledby="presetHeading">
+            <div class="panel-head preset-heading">
+              <h2 id="presetHeading">导出方式</h2>
+              <p id="presetSummary" class="subtitle-inline" aria-live="polite" hidden></p>
             </div>
-
-            <div id="presetBar" class="preset-bar" aria-label="导出预设">
-              <button class="preset-card" type="button" data-preset="quick-export">
+            <div id="presetBar" class="preset-bar" aria-label="导出方式">
+              <button class="preset-card" type="button" data-preset="quick-export" aria-pressed="false">
                 <span class="preset-title">快速导出</span>
-                <span class="preset-desc">小体积 Markdown，适合 AI</span>
+                <span class="preset-desc">纯文字 Markdown</span>
               </button>
-              <button class="preset-card" type="button" data-preset="ai-ready">
+              <button class="preset-card" type="button" data-preset="ai-ready" aria-pressed="false">
                 <span class="preset-title">带图留档</span>
-                <span class="preset-desc">嵌入图片，文件会变大</span>
+                <span class="preset-desc">图文离线保存</span>
               </button>
-              <button class="preset-card" type="button" data-preset="obsidian">
-                <span class="preset-title">存到 Obsidian</span>
-                <span class="preset-desc">直接写入 Vault 目标目录</span>
+              <button class="preset-card" type="button" data-preset="obsidian" aria-pressed="false">
+                <span class="preset-title">Obsidian</span>
+                <span class="preset-desc">写入笔记目录</span>
               </button>
             </div>
-
+            <div class="actions">
+              <button id="primaryAction" class="button button-primary" type="button" disabled>导出当前页面</button>
+              <button id="openFeishuSave" class="button" type="button" disabled>保存到飞书</button>
+              <button id="secondaryAction" class="button" type="button" hidden disabled>更多操作</button>
+            </div>
+          </section>
+        </div>
             <details id="popupAdvancedSettings" class="advanced-settings">
-              <summary class="advanced-summary">更多设置</summary>
+              <summary class="advanced-summary">自定义导出设置</summary>
               <div class="advanced-content">
                 <div class="quick-card">
                   <span class="field-label">输出目标</span>
@@ -95,7 +70,7 @@
                     </label>
                     <label class="segment">
                       <input id="outputTargetBoth" type="radio" name="outputTarget" value="both">
-                      <span>两者都要</span>
+                      <span>下载 + Obsidian</span>
                     </label>
                     <label class="segment">
                       <input id="outputTargetObsidian" type="radio" name="outputTarget" value="obsidian">
@@ -108,27 +83,31 @@
                   <input id="includeImages" type="checkbox">
                   <span class="toggle-copy">
                     <span class="toggle-title">保留图片</span>
-                    <span class="toggle-desc">开启后会把图片嵌入 Markdown，文件会明显变大。</span>
+                    <span class="toggle-desc">将图片嵌入 Markdown，离线可查看，文件体积会增大。</span>
                   </span>
                 </label>
 
                 <p id="primaryHint" class="hint">当前页的主操作会始终显示在这里。</p>
               </div>
             </details>
-          </section>
-        </div>
       </section>
 
+      <details id="toolsDrawer" class="advanced-settings tools-drawer">
+        <summary class="advanced-summary"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>批量与专栏工具</summary>
+        <div class="tools-content">
+          <div class="category-tabs" role="tablist" aria-label="更多工具分类">
+            <button id="categoryTabWechat" class="category-tab" type="button" role="tab" aria-controls="categoryToolsPanel" aria-selected="false" tabindex="-1" data-category="wechat">微信公众号</button>
+            <button id="categoryTabFeishu" class="category-tab" type="button" role="tab" aria-controls="categoryToolsPanel" aria-selected="false" tabindex="-1" data-category="feishu">飞书</button>
+            <button id="categoryTabScys" class="category-tab" type="button" role="tab" aria-controls="categoryToolsPanel" aria-selected="false" tabindex="-1" data-category="scys">生财有术</button>
+            <button id="categoryTabOther" class="category-tab" type="button" role="tab" aria-controls="categoryToolsPanel" aria-selected="false" tabindex="-1" data-category="other">其它</button>
+          </div>
+          <div id="categoryToolsPanel" class="tools-content" role="tabpanel" tabindex="0">
       <section id="scysWorkspace" class="panel workspace-panel" hidden>
         <div class="panel-head panel-head-tight">
-          <h2>生财有术工具区</h2>
-          <p class="subtitle-inline">当前页如果是课程章节，这里会直接给出专栏导出入口。</p>
+          <h2>课程专栏导出</h2>
         </div>
 
-        <div class="note-card note-card-highlight">
-          <p class="note-title">专栏导出</p>
-          <p id="scysWorkspaceNote" class="note-copy">打开任一生财课程章节页后，这里会直接切到专栏导出模式。</p>
-        </div>
+        <p id="scysWorkspaceNote" class="hint workspace-hint">请先打开生财课程章节。</p>
 
         <div class="actions">
           <button id="scysExportCourse" class="button button-primary" type="button" disabled>导出当前专栏</button>
@@ -142,7 +121,7 @@
           <p id="batchWorkspaceSummary" class="subtitle-inline">粘贴多个链接后，会打开独立任务页继续执行。</p>
         </div>
 
-        <div id="batchStatus" class="status status-loading">尚未开始批量任务。</div>
+        <div id="batchStatus" class="status status-loading" role="status" aria-live="polite" hidden></div>
 
         <div class="field-group">
           <label id="batchLinksLabel" class="field-label" for="batchLinks">文章链接列表</label>
@@ -155,7 +134,7 @@
             <input id="batchZipOutput" type="checkbox" checked>
             <span class="toggle-copy">
               <span class="toggle-title">批量结果打包为 ZIP</span>
-              <span class="toggle-desc">推荐开启，更方便保存和管理。仅下载到浏览器时生效。</span>
+              <span class="toggle-desc">仅对本地下载生效，便于保存和管理。</span>
             </span>
           </label>
           <button id="batchDownloadLinks" class="button button-primary" type="button">批量下载链接列表</button>
@@ -165,23 +144,18 @@
 
       <section id="wechatWorkspace" class="panel workspace-panel" hidden>
         <div class="panel-head panel-head-tight">
-          <h2>公众号后台模式</h2>
-          <p class="subtitle-inline">先检测登录态，再按日期范围批量下载同号历史文章。</p>
+          <h2>按日期下载公众号文章</h2>
+          <p class="subtitle-inline">需登录公众号后台，按日期下载同号文章。</p>
         </div>
 
-        <div class="note-card note-card-highlight">
-          <p class="note-title">使用前先完成这一步</p>
-          <p class="note-copy">先在当前 Chrome 登录 `mp.weixin.qq.com`，再回来执行“按范围批量下载”。</p>
-        </div>
-
-        <div id="helperStatus" class="status status-loading">尚未检测公众号后台登录状态。</div>
+        <div id="helperStatus" class="status status-loading" role="status" aria-live="polite" hidden></div>
 
         <div class="field-group">
-          <label class="field-label" for="helperSeedUrl">种子文章链接</label>
+          <label class="field-label" for="helperSeedUrl">该公众号任意一篇文章链接</label>
           <textarea
             id="helperSeedUrl"
             class="text-input text-area text-area-compact"
-            placeholder="粘贴该公众号任意一篇文章链接，扩展会用它识别公众号并定位同号历史文章。"
+            placeholder="https://mp.weixin.qq.com/s/…"
           ></textarea>
         </div>
 
@@ -200,13 +174,13 @@
           <input id="includeImagesHelper" type="checkbox" checked>
           <span class="toggle-copy">
             <span class="toggle-title">下载正文图片</span>
-            <span class="toggle-desc">关闭后只导出正文文字，速度更快，也更适合做 AI 分析。</span>
+            <span class="toggle-desc">关闭后仅保存文字。</span>
           </span>
         </label>
 
         <div class="actions actions-uneven">
-          <button id="helperCheck" class="button" type="button">检测后台登录</button>
-          <button id="openWechatMpLogin" class="button" type="button">打开后台登录页</button>
+          <button id="helperCheck" class="button" type="button">检查登录状态</button>
+          <button id="openWechatMpLogin" class="button" type="button">打开公众号后台</button>
           <button id="helperDownload" class="button button-primary" type="button">按范围批量下载</button>
         </div>
 
@@ -216,29 +190,30 @@
       <section id="otherWorkspace" class="panel workspace-panel" hidden>
         <div class="panel-head panel-head-tight">
           <h2>其它网页</h2>
-          <p class="subtitle-inline">普通网页、X、小红书等文章页统一从这里处理。</p>
         </div>
 
-        <div class="note-card">
-          <p class="note-title">当前分类说明</p>
-          <p id="otherWorkspaceNote" class="note-copy">打开普通网页正文后，上方主按钮会直接变为“导出当前网页”。</p>
-        </div>
+        <p id="otherWorkspaceNote" class="hint workspace-hint">使用上方按钮保存当前网页。</p>
       </section>
 
-      <section id="obsidianDock" class="obsidian-dock">
-        <div class="obsidian-dock-main">
-          <div class="obsidian-dock-copy">
-            <span class="obsidian-dock-label">Obsidian</span>
-            <span id="obsidianSummary" class="obsidian-dock-value">尚未配置</span>
-            <span id="obsidianFolder" class="obsidian-dock-path">-</span>
-          </div>
-          <div class="obsidian-dock-actions">
-            <button id="pickObsidianFolder" class="button button-small" type="button">选择目标目录</button>
-            <button id="clearObsidianFolder" class="button button-small" type="button">清除授权</button>
+
           </div>
         </div>
-        <div id="obsidianStatus" class="status status-loading dock-status">正在检测 Obsidian 目标目录…</div>
-      </section>
+      </details>
+
+      <details id="obsidianDock" class="advanced-settings obsidian-dock">
+        <summary class="advanced-summary"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 13h8"/></svg>Obsidian 目录<span id="obsidianSummary" class="obsidian-dock-value">尚未配置</span></summary>
+        <div class="advanced-content">
+          <p class="hint">选择 Vault 内的文件夹，导出的笔记会直接保存到这里。</p>
+          <div class="obsidian-dock-main">
+            <span id="obsidianFolder" class="obsidian-dock-path" hidden></span>
+            <div class="obsidian-dock-actions">
+              <button id="pickObsidianFolder" class="button button-small" type="button">选择目标目录</button>
+              <button id="clearObsidianFolder" class="button button-small" type="button">清除授权</button>
+            </div>
+          </div>
+          <div id="obsidianStatus" class="status status-loading" role="status" aria-live="polite" hidden></div>
+        </div>
+      </details>
     </main>
 
     <script src="shared/export-url-utils.js"></script>

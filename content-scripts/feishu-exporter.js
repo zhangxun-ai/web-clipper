@@ -1,4 +1,7 @@
 (function () {
+  // Dynamic injection can happen again when the user opens the save page.
+  const previousCapture = globalThis.FeishuWebCapture;
+  if (previousCapture?.version === 3) return;
   const MESSAGE_GET_PAGE_INFO = "feishu-export:get-page-info";
   const MESSAGE_EXPORT_DOCUMENT = "feishu-export:export-document";
   const MESSAGE_GET_SCYS_COURSE_OUTLINE = "feishu-export:get-scys-course-outline";
@@ -180,7 +183,9 @@
     ".mask"
   ].join(",");
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Upgrade capture in already-open tabs without registering a second export
+  // listener. The export protocol is unchanged; clipping reads the global API.
+  if (!previousCapture) chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || ![
       MESSAGE_GET_PAGE_INFO,
       MESSAGE_EXPORT_DOCUMENT,
@@ -198,6 +203,84 @@
 
     return true;
   });
+
+  globalThis.FeishuWebCapture = { version: 3, snapshot: captureWebSnapshot };
+
+  async function captureWebSnapshot() {
+    if (!globalThis.WebFeishuBlocks?.fromRoot) throw new Error("网页剪存组件未加载，请刷新扩展和原网页后重试。");
+    const sourceUrl = location.href;
+    let liveRoot;
+    let meta;
+    if (isGoogleDocsPage()) {
+      meta = getGoogleDocsMeta();
+      const exported = parseGoogleDocsExportHtml(await fetchGoogleDocsExportHtml(buildGoogleDocsExportUrl(sourceUrl)));
+      liveRoot = exported.querySelector("body.doc-content, .doc-content") || exported.body;
+      normalizeGoogleDocsExportRoot(liveRoot);
+    } else {
+      liveRoot = await waitForWebCaptureRoot(sourceUrl);
+      meta = isWechatArticlePage() ? getWechatArticleMeta() : getGenericWebMeta();
+    }
+    if (!liveRoot || !String(liveRoot.textContent || "").trim()) throw new Error("未读取到文章正文，请先在原网页打开完整内容。");
+    const root = cloneWebCaptureRoot(liveRoot);
+    if (location.href !== sourceUrl) throw new Error("原网页已切换，请从要保存的网页重新打开插件。");
+    return globalThis.WebFeishuBlocks.fromRoot(root, { title: meta.title, sourceUrl });
+  }
+
+  async function waitForWebCaptureRoot(sourceUrl, timeoutMs = 15000) {
+    const isScysArticle = /(^|\.)scys\.com$/i.test(location.hostname) && /^\/articleDetail\//.test(location.pathname);
+    let priorRoot, priorSignature = "", stableSince = 0;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() <= deadline) {
+      if (location.href !== sourceUrl) throw Object.assign(new Error("原网页已切换，请从要保存的文章重新打开插件。"), { code: "SOURCE_CHANGED" });
+      const root = isWechatArticlePage() ? document.querySelector("#js_content") : isScysArticle
+        ? document.querySelector("main .feishu-doc-content") || document.querySelector("main .content-container")
+        : getGenericExportRoot();
+      const content = String(root?.textContent || "").trim();
+      const loading = !content || /^(?:正在加载|加载中|请稍候|请先登录|登录后查看)/.test(content)
+        || Boolean(root?.matches?.('[aria-busy="true"], [role="progressbar"]'))
+        || Boolean(root?.querySelector('[aria-busy="true"], [role="progressbar"]'));
+      if (root && !loading) {
+        const images = Array.from(root.querySelectorAll("img")).map(node => node.getAttribute("data-src") || node.currentSrc || node.getAttribute("src") || "").join("\n");
+        const signature = content + "\u0000" + images;
+        if (root === priorRoot && signature === priorSignature) {
+          if (Date.now() - stableSince >= 750) return root;
+        } else { priorRoot = root; priorSignature = signature; stableSince = Date.now(); }
+      } else { priorRoot = null; priorSignature = ""; }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    throw Object.assign(new Error("文章正文尚未加载完成，请在原网页确认能看到完整内容，再继续当前任务。"), { code: "PAGE_NOT_READY" });
+  }
+
+  function cloneWebCaptureRoot(liveRoot) {
+    const originals = [liveRoot, ...liveRoot.querySelectorAll("*")];
+    if (originals.length > 100000) throw new Error("网页正文结构过大，请缩小保存范围。");
+    const clone = liveRoot.cloneNode(true);
+    const copies = [clone, ...clone.querySelectorAll("*")];
+    // Preserve visible inline emphasis before detaching the article from its CSS.
+    originals.forEach((original, index) => {
+      const copy = copies[index];
+      const style = original.ownerDocument?.defaultView?.getComputedStyle(original);
+      if (style && copy.style) {
+        for (const key of ["fontWeight", "fontStyle", "textDecorationLine", "whiteSpace"]) {
+          if (style[key]) copy.style[key] = style[key];
+        }
+        if (style.display === "none" || style.visibility === "hidden") copy.hidden = true;
+      }
+      if (original.tagName?.toLowerCase() === "img") {
+        const url = original.getAttribute("data-original") || original.getAttribute("data-actualsrc") || original.getAttribute("data-src") || original.currentSrc || original.getAttribute("src");
+        if (url) copy.setAttribute("src", url);
+        if (original.naturalWidth) copy.setAttribute("width", original.naturalWidth);
+        if (original.naturalHeight) copy.setAttribute("height", original.naturalHeight);
+      }
+      // cloneNode drops currentSrc. Keep the resource selected by the browser
+      // instead of choosing an unsupported first <source> from a media player.
+      if (["video", "audio"].includes(original.tagName?.toLowerCase()) && original.currentSrc) {
+        copy.setAttribute("src", original.currentSrc);
+      }
+    });
+    for (const node of clone.querySelectorAll("script, style, noscript, template, nav, form, dialog, .block-code-header")) node.remove();
+    return clone;
+  }
 
   async function handleMessage(message) {
     if (message.type === MESSAGE_GET_PAGE_INFO) {
@@ -4317,6 +4400,9 @@
       __test: {
         convertBlock,
         getGenericWebMeta,
+        captureWebSnapshot,
+        cloneWebCaptureRoot,
+        waitForWebCaptureRoot,
         isGoogleDocsPage,
         getGoogleDocsMeta,
         buildGoogleDocsExportUrl,

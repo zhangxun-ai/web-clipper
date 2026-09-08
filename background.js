@@ -1,3 +1,5 @@
+importScripts("shared/feishu-wiki-clip.js", "shared/web-image-capture.js", "shared/feishu-clip-service.js");
+
 const MESSAGE_FETCH_ASSET = "exporter:fetch-asset";
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

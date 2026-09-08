@@ -8,6 +8,7 @@
 
 ## 插件能力
 
+- 飞书文档正文和图片剪存到指定知识库父页面（需安装本机连接器，见[使用说明](./feishu-wiki-clip.md)）
 - 导出飞书 `docx/wiki` 文档到本地 Markdown
 - 导出微信公众号文章到本地 Markdown
 - 在当前 Chrome 已登录 `mp.weixin.qq.com` 的前提下，按时间范围批量下载同公众号历史文章

@@ -25,6 +25,8 @@ content-scripts/top.js
 __pycache__/
 *.pyc
 helper/data/
+node_modules/
+output/playwright/
 
 # OS
 .DS_Store
