@@ -1,9 +1,10 @@
 const assert = require("node:assert/strict"), test = require("node:test"), vm = require("node:vm"), fs = require("node:fs");
 const source = fs.readFileSync(require.resolve("../feishu-save.js"), "utf8");
 const clipApi = require("../shared/feishu-wiki-clip.js");
+const onboarding = require("../shared/connector-onboarding.js");
 const requestId = "11111111-1111-4111-8111-111111111111";
 
-async function page(overrides = {}, store = { target: { url: "https://my.feishu.cn/wiki/Parent" } }) {
+async function page(overrides = {}, store = { target: { url: "https://my.feishu.cn/wiki/Parent" } }, environment = {}) {
   class Element {
     constructor() { this.value = ""; this.textContent = ""; this.hidden = true; this.dataset = {}; this.children = []; this.events = {}; }
     addEventListener(name, handler) { this.events[name] = handler; }
@@ -11,7 +12,7 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
     appendChild(child) { this.children.push(child); }
     removeAttribute() {}
   }
-  const elements = new Map(), calls = [], messages = [], opened = [], delays = [];
+  const elements = new Map(), calls = [], messages = [], opened = [], delays = [], copied = [];
   const el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   const handlers = {
     status: () => ({ available: true }), list_spaces: () => ({ items: [{ space_id: "123", name: "我的知识库" }], has_more: false }),
@@ -25,24 +26,90 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
   const location = new URL(`chrome-extension://abcdefghijklmnopabcdefghijklmnop/feishu-save.html?source=https://my.feishu.cn/docx/Source&requestId=${store.requestId || requestId}${store.job ? "&jobId=" + store.job.id : ""}`);
   const context = {
     document: { getElementById: el, createElement: () => new Element() },
-    FeishuWikiClip: clipApi, URL, URLSearchParams, Map, Set, Option: class { constructor(text, value) { this.text = text; this.value = value; } },
+    FeishuWikiClip: clipApi, ConnectorOnboarding: onboarding, URL, URLSearchParams, Map, Set, Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     location, history: { replaceState(_state, _unused, url) { location.href = url; } }, crypto: require("node:crypto").webcrypto, setInterval() {},
     setTimeout(callback, delay) { delays.push(delay); callback(); },
-    chrome: { runtime: { id: "abcdefghijklmnopabcdefghijklmnop", sendMessage(message, callback) {
+    chrome: { runtime: { id: environment.extensionId ?? "abcdefghijklmnopabcdefghijklmnop", sendMessage(message, callback) {
       messages.push(message);
       if (message.operation) calls.push(message.operation);
       Promise.resolve().then(() => message.action !== "native" ? handlers[message.action](message)
         : handlers[message.operation](message.params)).then(data => callback({ ok: true, data }),
         error => callback({ ok: false, error: error.message, code: error.code, retryable: error.retryable, uncertain: error.uncertain }));
     } }, tabs: { create: async info => opened.push(info.url) } },
-    window: { confirm: () => true }, navigator: { clipboard: {} }
+    window: { confirm: () => true }, navigator: { platform: "MacIntel", ...environment.navigator, clipboard: { writeText: async value => copied.push(value) } }
   };
   vm.runInNewContext(source, context);
   await new Promise(setImmediate);
-  return { el, calls, messages, handlers, opened, delays, context, store, click: async id => { await el(id).events.click(); },
+  return { el, calls, messages, handlers, opened, delays, copied, context, store, click: async id => { await el(id).events.click(); },
     input: (id, value) => { el(id).value = value; el(id).events.input(); } };
 }
 const failure = (code, message) => () => { throw Object.assign(new Error(message), { code }); };
+
+test("Mac setup copies a bounded Agent prompt for the current ID and selected browser", async () => {
+  const p = await page({ status: failure("NATIVE_UNAVAILABLE", "missing") });
+  assert.equal(p.el("connectorBrowser").value, "chrome");
+  await p.click("copyAgentPrompt");
+  assert.equal(p.copied[0], onboarding.buildAgentPrompt({ id: "abcdefghijklmnopabcdefghijklmnop", browser: "chrome" }));
+  p.el("connectorBrowser").value = "dia";
+  p.el("connectorBrowser").events.change();
+  await p.click("copyAgentPrompt");
+  assert.match(p.copied[1], /当前浏览器：dia/);
+  assert.match(p.copied[1], /--browser dia/);
+  assert.equal(p.el("sourceInstall").hidden, false);
+  await p.click("copyInstall");
+  assert.match(p.copied[2], /--browser dia$/);
+  assert.deepEqual(p.calls, ["status"]);
+});
+
+test("Mac Edge prompt uses the current extension ID rather than another installed copy", async () => {
+  const p = await page({ status: failure("NATIVE_UNAVAILABLE", "missing") }, {}, {
+    extensionId: "b".repeat(32), navigator: { userAgent: "Mozilla/5.0 (Macintosh) Chrome/140.0 Edg/140.0", platform: "MacIntel" }
+  });
+  await p.click("copyAgentPrompt");
+  assert.equal(p.copied[0], onboarding.buildAgentPrompt({ id: "b".repeat(32), browser: "edge" }));
+  assert.doesNotMatch(p.copied[0], /abcdefghijklmnop/);
+});
+
+test("Windows Edge shows the support boundary without an unusable prompt or Mac command", async () => {
+  const p = await page({ status: failure("NATIVE_UNAVAILABLE", "missing") }, {}, {
+    extensionId: "b".repeat(32), navigator: { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0 Safari/537.36 Edg/140.0", platform: "Win32" }
+  });
+  assert.equal(p.el("connectorBrowser").value, "edge");
+  assert.match(p.el("connectorPlatform").textContent, /本地导出可用；保存到飞书暂仅支持 Mac/);
+  assert.doesNotMatch(p.el("connectionStatus").textContent, /复制|安装向导|安装包/);
+  assert.equal(p.el("connectorInstallSteps").hidden, true);
+  assert.equal(p.el("copyAgentPrompt").disabled, true);
+  assert.equal(p.el("sourceInstall").hidden, true);
+  assert.equal(p.el("installCommand").textContent, "");
+  await p.click("copyInstall");
+  await p.click("copyAgentPrompt");
+  assert.deepEqual(p.copied, []);
+});
+
+test("invalid extension ID cannot be copied into an Agent prompt", async () => {
+  const p = await page({}, {}, { extensionId: "invalid;bad-id" });
+  assert.equal(p.el("copyAgentPrompt").disabled, true);
+  assert.equal(p.el("sourceInstall").hidden, true);
+  assert.match(p.el("connectorInstallFeedback").textContent, /无法识别插件/);
+  await p.click("copyAgentPrompt");
+  assert.deepEqual(p.copied, []);
+});
+
+test("a clipboard failure opens the prompt for manual copying", async () => {
+  const p = await page({ status: failure("NATIVE_UNAVAILABLE", "missing") });
+  p.context.navigator.clipboard.writeText = async () => { throw new Error("denied"); };
+  await p.click("copyAgentPrompt");
+  assert.equal(p.el("agentPromptPreview").open, true);
+  assert.match(p.el("copyAgentPrompt").textContent, /下方提示词后手动复制/);
+});
+
+test("missing Feishu application guides users to the Agent prompt without starting login", async () => {
+  const p = await page({ status: failure("NOT_CONFIGURED", "run init") });
+  assert.match(p.el("connectionStatus").textContent, /复制下方安装提示词/);
+  assert.doesNotMatch(p.el("connectionStatus").textContent, /run init|安装包/);
+  assert.equal(p.el("connect").hidden, true);
+  assert.deepEqual(p.calls, ["status"]);
+});
 
 test("opening and rechecking reuse login and saved target without starting authorization", async () => {
   const p = await page();

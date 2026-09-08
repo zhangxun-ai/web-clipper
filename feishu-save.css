@@ -227,6 +227,7 @@ body {
 .clip-app #resolveTarget,
 .clip-app #loadSpaces,
 .clip-app #moreNodes,
+.clip-app #copyAgentPrompt,
 .clip-app #copyInstall {
   justify-self: start;
 }

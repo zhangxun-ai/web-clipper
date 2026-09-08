@@ -1,6 +1,8 @@
 "use strict";
 
 const clipApi = globalThis.FeishuWikiClip;
+const onboarding = globalThis.ConnectorOnboarding;
+const connectorEnvironment = onboarding.detectEnvironment(navigator);
 const $ = (id) => document.getElementById(id);
 let selectedTarget = null;
 let latestState = { job: null, running: false };
@@ -63,7 +65,12 @@ function showConnection(phase, message) {
 }
 
 function connectionError(error) {
-  showConnection(AUTH_ERRORS.has(error.code) ? "needs_auth" : SETUP_ERRORS.has(error.code) ? "setup" : "error", error.message);
+  const message = SETUP_ERRORS.has(error.code) && connectorEnvironment.os !== "mac" ? "本地导出可用；保存到飞书暂仅支持 Mac。"
+    : error.code === "NOT_CONFIGURED" ? "尚未配置飞书应用。请复制下方安装提示词，让 AI 助手继续引导完成应用配置，再回到这里重新检测。"
+    : error.code === "CLI_UNAVAILABLE" ? "连接器组件不完整。请复制下方安装提示词，让 AI 助手检查并修复缺失组件，然后重新检测。"
+    : error.code === "NATIVE_UNAVAILABLE" ? "尚未连接本机飞书连接器。请复制下方安装提示词，让 AI 助手完成安装；如果已经安装，请确认所选浏览器，再让 AI 助手检查连接。"
+    : error.message;
+  showConnection(AUTH_ERRORS.has(error.code) ? "needs_auth" : SETUP_ERRORS.has(error.code) ? "setup" : "error", message);
 }
 
 function status(id, message, kind = "loading") {
@@ -479,12 +486,53 @@ $("finishAuth").addEventListener("click", () => withUi(async () => {
   await checkConnection();
 }));
 $("copyInstall").addEventListener("click", async () => {
+  if ($("sourceInstall").hidden || !$("installCommand").textContent) return;
   try { await navigator.clipboard.writeText($("installCommand").textContent); $("copyInstall").textContent = "已复制"; }
   catch (_) { $("copyInstall").textContent = "请选中上方命令后手动复制"; }
 });
 
+function updateAgentPrompt() {
+  $("copyAgentPrompt").textContent = "复制安装提示词";
+  $("copyInstall").textContent = "复制安装命令";
+  $("connectorInstallFeedback").hidden = true;
+  try {
+    const browser = $("connectorBrowser").value;
+    $("agentInstallPrompt").textContent = onboarding.buildAgentPrompt({ id: chrome.runtime.id, browser, os: connectorEnvironment.os });
+    $("installCommand").textContent = onboarding.sourceCommand(chrome.runtime.id, browser, connectorEnvironment.os);
+    $("copyAgentPrompt").disabled = false;
+    $("sourceInstall").hidden = connectorEnvironment.os !== "mac";
+  } catch (error) {
+    $("agentInstallPrompt").textContent = "";
+    $("installCommand").textContent = "";
+    $("copyAgentPrompt").disabled = true;
+    $("sourceInstall").hidden = true;
+    $("connectorInstallFeedback").hidden = false;
+    $("connectorInstallFeedback").textContent = error.message;
+  }
+}
+
+function setupConnectorInstructions() {
+  const { os, browser } = connectorEnvironment;
+  const supported = os === "mac";
+  $("connectorPlatform").textContent = supported ? "当前电脑：Mac。" : "本地导出可用；保存到飞书暂仅支持 Mac。";
+  $("connectorInstallSteps").hidden = !supported;
+  const browsers = [["chrome", "Chrome"], ["edge", "Microsoft Edge"], ...(os === "mac" ? [["dia", "Dia"]] : [])];
+  $("connectorBrowser").replaceChildren(...browsers.map(([value, label]) => new Option(label, value)));
+  $("connectorBrowser").value = browser;
+  $("copyAgentPrompt").disabled = !supported;
+  $("sourceInstall").hidden = !supported;
+  if (supported) updateAgentPrompt();
+}
+
+$("connectorBrowser").addEventListener("change", updateAgentPrompt);
+$("copyAgentPrompt").addEventListener("click", async () => {
+  if ($("copyAgentPrompt").disabled || !$("agentInstallPrompt").textContent) return;
+  try { await navigator.clipboard.writeText($("agentInstallPrompt").textContent); $("copyAgentPrompt").textContent = "已复制安装提示词"; }
+  catch (_) { $("agentPromptPreview").open = true; $("copyAgentPrompt").textContent = "请选中下方提示词后手动复制"; }
+});
+
 async function init() {
-  $("installCommand").textContent = `python3 helper/install_feishu_native_host.py --extension-id ${chrome.runtime.id}`;
+  setupConnectorInstructions();
   const params = new URLSearchParams(location.search);
   $("sourceUrl").value = params.get("source") || "";
   $("sourceSettings").open = !currentSourceUrl();

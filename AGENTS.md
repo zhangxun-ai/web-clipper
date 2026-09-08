@@ -6,6 +6,7 @@ Chrome Manifest V3 扩展，无打包步骤，直接加载项目根目录。产�
 
 - 本地导出：`popup.js`、`content-scripts/feishu-exporter.js` 和 `shared/`。Google Docs 使用原生导出，避免重新依赖画布编辑器 DOM。
 - 飞书知识库剪存：[功能、接口和恢复说明](docs/feishu-wiki-clip.md)。从 `shared/feishu-wiki-clip.js` 和 `helper/feishu_native_host.py` 阅读数据完整性边界。
+- 首次连接与安装提示词：[Mac 快速连接](docs/connector-setup.md)，生成逻辑及固定源码校验信息见 `shared/connector-onboarding.js`。Windows 仅本地导出；不能将浏览器系统模拟测试当作本机连接器验收。
 - `release-cws/` 和 `release/` 是历史商店产物；开发修改根目录源文件，发布需独立验证和授权。
 
 ## 验证命令

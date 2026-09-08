@@ -30,14 +30,29 @@
         <details id="setup" class="advanced-settings" hidden>
           <summary class="advanced-summary">首次连接说明</summary>
           <div class="advanced-content">
-            <p class="hint">本机连接程序只需安装一次。已有飞书授权会自动复用并续期，后续无需每次登录。</p>
-            <ol class="setup-list">
-              <li>确认已安装并配置 <code>lark-cli</code>。<a href="https://github.com/larksuite/cli" target="_blank" rel="noopener noreferrer">官方安装说明</a></li>
-              <li>在此插件的项目目录打开终端，运行下方命令。Chrome 为默认浏览器，Dia 加 <code>--browser dia</code>，Edge 加 <code>--browser edge</code>，Chromium 加 <code>--browser chromium</code>。</li>
-            </ol>
-            <code id="installCommand" class="command"></code>
-            <button id="copyInstall" class="button button-small" type="button">复制安装命令</button>
-            <p class="hint">连接程序支持 macOS / Linux；Windows 暂未支持。安装后点击“重新检测”，会自动使用之前的授权；仅未登录、授权失效或需要新增权限时才显示登录入口。</p>
+            <p class="hint">Mac 上保存到飞书需要安装一次连接器。让 AI 助手完成安装后，已有配置和授权会自动复用，无需手动启动程序。</p>
+            <p id="connectorPlatform" class="hint"></p>
+            <div id="connectorInstallSteps" class="advanced-content" hidden>
+              <label class="field-label" for="connectorBrowser">当前使用的浏览器</label>
+              <select id="connectorBrowser" class="text-input" aria-describedby="connectorBrowserHint"></select>
+              <p id="connectorBrowserHint" class="hint">请确认当前浏览器；使用 Dia 时请在这里选择 Dia。</p>
+              <button id="copyAgentPrompt" class="button button-primary" type="button">复制安装提示词</button>
+              <p class="hint">粘贴到可以操作本机的 Codex、Claude Code 或 WorkBuddy，让 AI 助手检查环境并完成安装。首次飞书配置和授权仍需你按提示操作。</p>
+              <p class="hint">完成后回到此页点击“重新检测”。</p>
+              <details id="agentPromptPreview" class="advanced-settings">
+                <summary class="advanced-summary">查看安装提示词</summary>
+                <div class="advanced-content"><code id="agentInstallPrompt" class="command"></code></div>
+              </details>
+            </div>
+            <p id="connectorInstallFeedback" class="hint" role="status" hidden></p>
+            <details id="sourceInstall" class="advanced-settings" hidden>
+              <summary class="advanced-summary">已有依赖，手动安装</summary>
+              <div class="advanced-content">
+                <p class="hint">仅适用于已安装 Python 3、Node.js 并配置好 <a href="https://github.com/larksuite/cli" target="_blank" rel="noopener noreferrer">lark-cli</a> 的 Mac。在项目根目录运行：</p>
+                <code id="installCommand" class="command"></code>
+                <button id="copyInstall" class="button button-small" type="button">复制安装命令</button>
+              </div>
+            </details>
           </div>
         </details>
       </section>
@@ -127,6 +142,7 @@
       </footer>
     </main>
     <script src="shared/feishu-wiki-clip.js"></script>
+    <script src="shared/connector-onboarding.js"></script>
     <script src="feishu-save.js" defer></script>
   </body>
 </html>

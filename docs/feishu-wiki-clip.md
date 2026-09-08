@@ -24,6 +24,8 @@
 
 ## 一次性连接
 
+普通 Mac 用户可在首次连接页面点击“复制安装提示词”，交给本机 Codex、Claude Code 或 WorkBuddy 执行。商店安装用户无需手动克隆仓库。固定源码下载、依赖、校验及验收步骤见 [Mac 快速连接](connector-setup.md)。下方保留已有依赖的源码安装说明；Windows 飞书剪存暂不支持，Linux 不作为当前上手流程的验收目标。
+
 当前版本通过本机连接器调用官方 [飞书 CLI](https://github.com/larksuite/cli)，扩展不保存应用密钥或登录令牌：
 
 `剪存页 → 扩展后台 → Native Messaging → 本机 lark-cli（用户身份）→ 飞书官方 API`

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "文档本地导出",
   "description": "将生财有术、公众号、普通网页和飞书文档的正文图片保存到指定飞书知识库，也支持本地导出。",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "default_locale": "zh_CN",
   "icons": {
     "16": "icon/16.png",
