@@ -1,5 +1,5 @@
 {
-  "name": "wechat-feishu-download",
+  "name": "web-clipper",
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.cjs",

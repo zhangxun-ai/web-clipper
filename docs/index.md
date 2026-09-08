@@ -2,6 +2,8 @@
 
 这是 Chrome 扩展「文档本地导出」的公开说明页面。
 
+项目名称：`web-clipper`。源码与完整使用说明见 [GitHub 仓库](https://github.com/zhangxun-ai/web-clipper)。扩展显示名称与仓库名称独立设置。
+
 ## 页面链接
 
 - [隐私政策](./privacy-policy.md)

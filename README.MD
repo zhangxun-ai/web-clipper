@@ -1,4 +1,8 @@
-# wechat-feishu-download
+# web-clipper
+
+网页剪存：保存网页和在线文档的正文图片到飞书知识库、Obsidian 或本地。
+
+源码仓库：[zhangxun-ai/web-clipper](https://github.com/zhangxun-ai/web-clipper)。项目名为 `web-clipper`，当前扩展显示名称仍为「文档本地导出」，发布名称独立于仓库名。
 
 一个可直接加载到 Chrome 的文档导出与剪存插件，支持：
 
@@ -11,6 +15,12 @@
 - 生财课程章节页“一键导出当前专栏”为单个 `Markdown + HTML`
 
 本地 Markdown 导出优先保证正文可读，不追求 100% 样式还原。飞书知识库剪存将可读取的网页正文转换为飞书内容块；飞书源文档直接读取原生块，保留正文、富文本、标题、列表、代码和普通表格结构，图片独立上传，再核对内容和位置。评论、历史版本不在剪存范围内；不支持的资源块会明确提示，不会静默丢弃。
+
+## 项目名称与本地目录
+
+- 新克隆项目默认使用 `web-clipper` 目录；已有本地目录无需改名，GitHub 仓库改名不会要求重新安装扩展。
+- 已有克隆可运行 `git remote set-url origin git@github.com:zhangxun-ai/web-clipper.git` 更新远程地址。
+- 如果自行移动或重命名本地目录，需要重新加载扩展、核对扩展 ID，并按[连接器说明](docs/feishu-wiki-clip.md#一次性连接)重新注册本机连接器，因为连接器记录了源文件的绝对路径。
 
 ## 界面与常用入口
 
