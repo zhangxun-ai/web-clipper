@@ -57,17 +57,26 @@
         </details>
       </section>
 
-      <section id="jobPanel" class="panel workspace-panel" aria-live="polite" hidden>
+      <section id="jobPanel" class="panel workspace-panel" aria-labelledby="jobHeading" hidden>
         <div class="panel-head"><h2 id="jobHeading">正在保存</h2></div>
         <p id="jobTitle" class="hint"></p>
         <p id="jobStatus" class="status status-loading" role="status"></p>
+        <div id="jobProgress" class="job-progress" hidden>
+          <div class="progress-heading" role="status" aria-atomic="true">
+            <strong id="progressPhase"></strong>
+            <span id="progressCount"></span>
+          </div>
+          <progress id="progressBar" aria-labelledby="progressPhase" aria-describedby="progressCount"></progress>
+          <p id="progressTiming" class="hint progress-timing"></p>
+          <p id="progressNotice" class="hint progress-notice" role="status" hidden></p>
+        </div>
+        <ol class="steps" id="steps" aria-label="保存步骤">
+          <li data-stage="ready">读取图文</li><li data-stage="importing">写入并核对</li><li data-stage="moving">保存到知识库</li><li data-stage="complete">确认完成</li>
+        </ol>
         <a id="resultLink" class="button button-primary" target="_blank" rel="noopener noreferrer" hidden>在飞书中打开</a>
         <details id="jobDetails" class="advanced-settings">
           <summary class="advanced-summary">查看处理详情</summary>
           <div class="advanced-content">
-            <ol class="steps" id="steps">
-              <li data-stage="ready">读取图文</li><li data-stage="importing">写入并核对</li><li data-stage="moving">保存到知识库</li><li data-stage="complete">确认完成</li>
-            </ol>
             <p id="jobDetailStatus" class="hint"></p>
             <div class="actions">
               <button id="resume" class="button" type="button" hidden>重试当前保存</button>

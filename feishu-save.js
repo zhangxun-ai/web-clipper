@@ -18,6 +18,8 @@ let targetNeedsRemember = false;
 let sourceTitle = "";
 let sourceTitleUrl = "";
 let rememberedTarget = null;
+let lastStateReceivedAt = Date.now();
+let stateSyncError = "";
 // A new save page is a new user request, even for the same article. Reloading
 // this page or following its failure notification stays on the exact request.
 const route = new URL(location.href);
@@ -74,8 +76,12 @@ function connectionError(error) {
 }
 
 function status(id, message, kind = "loading") {
-  $(id).textContent = message;
+  setText(id, message);
   $(id).className = `status status-${kind}`;
+}
+
+function setText(id, message) {
+  if ($(id).textContent !== message) $(id).textContent = message;
 }
 
 function request(action, details = {}) {
@@ -152,6 +158,8 @@ const CONTENT_FAILURE_CODES = new Set(["UNSUPPORTED_CONTENT", "INVALID_CONTENT",
 
 function isContentFailure(job) {
   return CONTENT_FAILURE_CODES.has(job?.errorCode)
+    || (job?.errorCode === "CONTENT_MISMATCH" && job.stage === "ready" && !job.copy?.token
+      && (job.failedStep || job.activeStep) === "capture_web")
     || (!job?.errorCode && ["capture_web", "capture_image"].includes(job?.failedStep || job?.activeStep));
 }
 
@@ -212,6 +220,79 @@ function failureMessage(job) {
   return `暂未保存成功。${preservedProgress(job)}详细原因见处理详情。`;
 }
 
+const IMPORT_PHASES = {
+  content_prepared: "准备新建文档", content_recovering: "核对文档创建结果",
+  content_titling: "恢复文章标题", content_appending: "写入正文", content_images: "上传并关联图片",
+  content_bookmarks: "还原链接卡片", content_links: "连接文内章节",
+  content_verifying: "核对正文与图片", content_ready: "内容核对完成"
+};
+
+function duration(milliseconds) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`;
+}
+
+function renderProgress(now = Date.now()) {
+  const job = currentJob();
+  const terminal = !job || ["complete", "abandoned"].includes(job.stage);
+  $("jobProgress").hidden = terminal;
+  if (terminal) return;
+  const active = latestState.running || job.autoRun;
+  const queued = active && latestState.queued;
+  const retrying = active && job.retryable;
+  const recovering = active && (job.moveRecovering || job.progress?.phase === "content_recovering");
+  const phase = job.stage === "importing" ? IMPORT_PHASES[job.progress?.phase] || "准备写入并核对文档"
+    : ({ ready: "读取原文结构", collecting: "读取原文图片", copying: "恢复已有副本",
+      copied: "准备保存到知识库", moving: "保存到所选知识库", pending: "等待飞书完成迁入",
+      verifying: "确认保存位置", move_failed: "保存到知识库未完成" })[job.stage] || "等待处理";
+  setText("progressPhase", queued ? `排队等待${latestState.queuePosition ? ` · 第 ${latestState.queuePosition} 位` : ""}`
+    : !active ? `已暂停 · ${phase}` : retrying ? `自动重试 · ${phase}` : phase);
+
+  // Import counts cover the whole write/verification phase, including batches
+  // and image binding. They are neither image counts nor overall save percent.
+  const collecting = job.stage === "collecting";
+  const importing = job.stage === "importing" && job.progress?.phase !== "collecting";
+  const total = job.progress?.total;
+  const completed = job.progress?.completed;
+  const measurable = !queued && (collecting || importing) && Number.isInteger(total) && total > 0
+    && Number.isInteger(completed) && completed >= 0 && completed <= total;
+  setText("progressCount", measurable
+    ? collecting ? `${completed} / ${total} 张` : `写入与核对：${completed} / ${total} 项`
+    : "");
+  const bar = $("progressBar");
+  bar.hidden = !active && !measurable;
+  if (measurable) { bar.max = total; bar.value = completed; }
+  else bar.removeAttribute("value");
+  const updatedAt = Date.parse(job.updatedAt || job.createdAt);
+  const createdAt = Date.parse(job.createdAt);
+  const idleFor = Number.isFinite(updatedAt) ? Math.max(0, now - updatedAt) : 0;
+  const timings = [];
+  if (Number.isFinite(createdAt)) timings.push(`自开始已过 ${duration(now - createdAt)}`);
+  if (Number.isFinite(updatedAt)) timings.push(idleFor < 2000 ? "刚刚有任务活动" : `最近活动在 ${duration(idleFor)}前`);
+  $("progressTiming").textContent = timings.join(" · ");
+  $("progressTiming").hidden = !timings.length;
+
+  const syncLost = active && (stateSyncError || now - lastStateReceivedAt >= 15000);
+  const delayed = active && !queued && !retrying && !recovering && idleFor >= 30000;
+  const retryAt = Math.max(Number(job.nextRetryAt) || 0, Number(job.nextRunAt) || 0);
+  const seconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
+  let notice = "";
+  if (syncLost) notice = stateSyncError === "EXTENSION_RELOADED"
+    ? "与插件的连接已中断，无法确认最新进度。请刷新此页查看原任务。"
+    : "暂时无法获取最新进度，后台是否仍在处理尚未确认。请刷新此页查看原任务，勿重复保存。";
+  else if (retrying) notice = `连接暂时异常，自动重试第 ${job.retryCount || 1} / 5 次${seconds ? `，约 ${seconds} 秒后重试` : "，等待后台继续"}。已有进度会保留。`;
+  else if (recovering) notice = `正在核对${job.moveRecovering ? "知识库保存位置" : "文档创建结果"}${seconds ? `，约 ${seconds} 秒后再次查询` : "，等待飞书返回结果"}，无需重复保存。`;
+  else if (queued) notice = "前面的任务处理后会自动开始。读取图文前，请保持原网页打开。";
+  else if (delayed) notice = "这一步等待较久，暂未收到新的处理结果；页面仍能连接后台，尚不能确认是否异常。请勿重复保存。";
+  else if (active && job.stage === "pending") notice = "飞书正在处理迁入请求，插件会自动查询结果。";
+  setText("progressNotice", notice);
+  $("progressNotice").hidden = !notice;
+  $("jobProgress").dataset.waiting = String(Boolean(syncLost || delayed || queued || retrying || recovering || !active));
+  $("jobProgress").dataset.attention = String(Boolean(syncLost || delayed || !active));
+}
+
 function renderJob(state) {
   // State responses may arrive after the article field was edited, or from an
   // older extension worker. Never show another article's result in this page.
@@ -219,6 +300,7 @@ function renderJob(state) {
   const job = matchesRequest(candidate) && candidate.source?.url === currentSourceUrl()
     && (!selectedTarget || candidate.target?.url === selectedTarget.url) ? candidate : null;
   latestState = { ...state, job, running: Boolean(job && state.running), queued: Boolean(job && state.queued) };
+  renderProgress();
   $("jobPanel").hidden = !job;
   if (!job) {
     $("jobTitle").textContent = "";
@@ -234,8 +316,8 @@ function renderJob(state) {
   $("jobTitle").textContent = `${job.title || job.source.url} → ${job.target.spaceName ? `${job.target.spaceName} / ` : ""}${job.target.title}`;
   const descriptions = {
     ready: "正在读取原文结构并确认目标位置…", copying: "正在恢复已有的副本任务…",
-    collecting: `正在保存原文图片 ${job.progress?.completed || 0} / ${job.counts?.images || 0}…`,
-    importing: `正在${({ content_prepared: "准备新建文档", content_recovering: "自动核对保存结果", content_titling: "恢复文章标题", content_appending: "写入正文", content_images: "上传图片", content_bookmarks: "还原链接卡片", content_links: "连接文内章节", content_verifying: "核对正文与图片", content_ready: "完成内容核对" })[job.progress?.phase] || "写入并核对文档"} ${job.progress?.completed || 0} / ${job.progress?.total || 0}…`,
+    collecting: "正在读取原文图片…",
+    importing: `${IMPORT_PHASES[job.progress?.phase] || "正在写入并核对文档"}。`,
     copied: "已创建独立副本，准备移入知识库…", moving: "正在将副本移入所选父页面…",
     pending: "飞书正在处理迁入任务，将自动查询并核对保存位置…",
     verifying: "正在核对副本及其保存位置…", complete: "已核对正文、图片及保存位置。",
@@ -256,12 +338,16 @@ function renderJob(state) {
   const message = completed ? "保存成功，已核对图文与位置。" : abandoned ? `已停止保存。${preservedProgress(job)}` : state.queued
     ? `已加入保存队列${state.queuePosition ? `，排在第 ${state.queuePosition} 位` : ""}。可以关闭此页，完成后会通知你。`
     : (autoRetry || job.moveRecovering && job.autoRun) ? "正在自动完成保存。可以关闭此页，完成后会通知你。"
-    : paused ? failureMessage(job) : "正文和图片正在保存。可以关闭此页，完成后会通知你。";
+    : paused ? failureMessage(job) : ["ready", "collecting"].includes(job.stage)
+      ? "正在读取图文，请保持原网页打开。完成后会通知你。"
+      : "可以关闭此页，保存完成后会通知你。";
   status("jobStatus", message, paused ? "error" : completed ? "ready" : "loading");
   const stages = { ready: 0, collecting: 0, importing: 1, copying: 1, copied: 2, moving: 2, pending: 2, move_failed: 2, verifying: 3, complete: 4, abandoned: -1 };
   Array.from($("steps").children).forEach((item, index) => {
     item.dataset.active = String(index === stages[job.stage]);
     item.dataset.done = String(index < stages[job.stage]);
+    if (index === stages[job.stage]) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
   });
   $("resume").hidden = !paused;
   $("endTask").hidden = !paused;
@@ -279,7 +365,16 @@ async function refreshState() {
   const requestIdentity = `${activeRequestId}:${requestedJobId}`;
   try {
     const state = await request("state", { sourceUrl, ...(selectedTarget ? { targetUrl: selectedTarget.url } : {}) });
-    if (currentSourceUrl() === sourceUrl && requestIdentity === `${activeRequestId}:${requestedJobId}`) renderJob(state);
+    if (currentSourceUrl() === sourceUrl && requestIdentity === `${activeRequestId}:${requestedJobId}`) {
+      lastStateReceivedAt = Date.now();
+      stateSyncError = "";
+      renderJob(state);
+    }
+  } catch (error) {
+    if (currentSourceUrl() === sourceUrl && requestIdentity === `${activeRequestId}:${requestedJobId}`) {
+      stateSyncError = error.code || "STATE_UNAVAILABLE";
+      renderProgress();
+    }
   } finally { polling = false; }
 }
 
@@ -545,6 +640,8 @@ async function init() {
     }).catch(() => {});
   }
   const state = await request("state", { sourceUrl: currentSourceUrl(), reconcile: true });
+  lastStateReceivedAt = Date.now();
+  stateSyncError = "";
   rememberedTarget = state.target || null;
   $("targetUrl").value = params.get("target") || state.target?.url || "";
   targetNeedsRemember = Boolean(params.get("target"));
@@ -555,3 +652,4 @@ async function init() {
 
 init().catch(connectionError);
 setInterval(() => refreshState().catch(() => {}), 2000);
+setInterval(() => renderProgress(), 1000);

@@ -10,7 +10,8 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
     addEventListener(name, handler) { this.events[name] = handler; }
     replaceChildren(...children) { this.children = children; }
     appendChild(child) { this.children.push(child); }
-    removeAttribute() {}
+    setAttribute(name, value) { this[name] = value; }
+    removeAttribute(name) { delete this[name]; }
   }
   const elements = new Map(), calls = [], messages = [], opened = [], delays = [], copied = [];
   const el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
@@ -330,6 +331,95 @@ function uiJob(sourceUrl = "https://my.feishu.cn/docx/Source", id = "job-ui") {
   return { ...clipApi.createJob(sourceUrl, clipApi.targetFromNode({ space_id: "123", node_token: "Parent", title: "资料" }), id), requestId };
 }
 
+test("save progress exposes actual image counts and labels aggregate import work honestly", async () => {
+  const p = await page();
+  const job = { ...uiJob(), autoRun: true, stage: "collecting", progress: { phase: "collecting", completed: 7, total: 20 } };
+  p.context.renderJob({ job, running: true });
+  assert.equal(p.el("jobProgress").hidden, false);
+  assert.equal(p.el("progressPhase").textContent, "读取原文图片");
+  assert.equal(p.el("progressCount").textContent, "7 / 20 张");
+  assert.equal(p.el("progressBar").value, 7);
+  assert.equal(p.el("progressBar").max, 20);
+  assert.match(p.el("jobStatus").textContent, /保持原网页打开/);
+  p.context.renderJob({ job: { ...job, stage: "importing", progress: { phase: "content_images", completed: 12, total: 46 } }, running: true });
+  assert.equal(p.el("progressPhase").textContent, "上传并关联图片");
+  assert.equal(p.el("progressCount").textContent, "写入与核对：12 / 46 项");
+  assert.equal(p.el("progressBar").value, 12);
+  assert.doesNotMatch(p.el("progressCount").textContent, /张|%/);
+});
+
+test("unknown totals and stale collection counts cannot pretend to be import progress", async () => {
+  const p = await page();
+  for (const progress of [undefined, { total: 0, completed: 0 }, { total: 5, completed: 6 },
+    { phase: "collecting", total: 20, completed: 20 }]) {
+    p.context.renderJob({ job: { ...uiJob(), autoRun: true, stage: "importing", progress }, running: true });
+    assert.equal(p.el("progressCount").textContent, "");
+    assert.equal(p.el("progressBar").value, undefined);
+    assert.doesNotMatch(p.el("jobDetailStatus").textContent, /0 \/ 0/);
+  }
+});
+
+test("visible steps track actual stages and finish only after location verification", async () => {
+  const p = await page();
+  p.el("steps").children = [0, 1, 2, 3].map(i => p.el(`step${i}`));
+  for (const [stage, activeIndex] of [["ready", 0], ["collecting", 0], ["importing", 1], ["moving", 2], ["verifying", 3], ["complete", 4]]) {
+    p.context.renderJob({ job: { ...uiJob(), autoRun: stage !== "complete", stage }, running: stage !== "complete" });
+    for (let i = 0; i < 4; i++) {
+      assert.equal(p.el(`step${i}`).dataset.active, String(i === activeIndex));
+      assert.equal(p.el(`step${i}`).dataset.done, String(i < activeIndex));
+      assert.equal(p.el(`step${i}`)["aria-current"], i === activeIndex ? "step" : undefined);
+    }
+  }
+  assert.equal(p.el("jobProgress").hidden, true);
+  assert.equal(p.el("jobHeading").textContent, "已保存到飞书");
+});
+
+test("elapsed time survives page restore and long waits are not declared failures", async () => {
+  const p = await page();
+  const now = Date.now();
+  const job = { ...uiJob(), autoRun: true, stage: "importing", createdAt: new Date(now - 125000).toISOString(), updatedAt: new Date(now - 40000).toISOString() };
+  p.context.renderJob({ job, running: true });
+  p.context.renderProgress(now);
+  assert.match(p.el("progressTiming").textContent, /自开始已过 2 分 5 秒.*最近活动在 40 秒前/);
+  assert.match(p.el("progressNotice").textContent, /等待较久.*尚不能确认是否异常/);
+  assert.equal(p.el("resume").hidden, true);
+  p.context.renderJob({ job: { ...job, updatedAt: new Date().toISOString() }, running: true });
+  assert.equal(p.el("progressNotice").hidden, true);
+});
+
+test("queue and scheduled recovery expose distinct actionable waiting states", async () => {
+  const p = await page();
+  const job = { ...uiJob(), autoRun: true, stage: "collecting" };
+  p.context.renderJob({ job, running: false, queued: true, queuePosition: 2 });
+  assert.equal(p.el("progressPhase").textContent, "排队等待 · 第 2 位");
+  assert.match(p.el("progressNotice").textContent, /自动开始.*保持原网页打开/);
+  p.context.renderJob({ job: { ...job, retryable: true, retryCount: 2, nextRetryAt: Date.now() + 8000 }, running: true });
+  assert.match(p.el("progressNotice").textContent, /自动重试第 2 \/ 5 次.*秒后重试/);
+  p.context.renderJob({ job: { ...job, stage: "importing", progress: { phase: "content_recovering" }, nextRunAt: Date.now() + 30000 }, running: false });
+  assert.match(p.el("progressNotice").textContent, /核对文档创建结果.*秒后再次查询/);
+  assert.equal(p.el("resume").hidden, true);
+});
+
+test("lost or stalled state polling is visible and recovery clears it without starting another save", async () => {
+  const p = await page();
+  const job = { ...uiJob(), autoRun: true, stage: "moving" };
+  p.context.renderJob({ job, running: true });
+  p.context.renderProgress(Date.now() + 16000);
+  assert.match(p.el("progressNotice").textContent, /无法获取最新进度.*尚未确认/);
+  p.handlers.state = failure("EXTENSION_RELOADED", "disconnected");
+  await p.context.refreshState();
+  assert.match(p.el("progressNotice").textContent, /连接已中断.*刷新此页查看原任务/);
+  assert.equal(p.el("save").disabled, true);
+  p.handlers.state = () => ({ job, running: true });
+  await p.context.refreshState();
+  assert.equal(p.el("progressNotice").hidden, true);
+  assert.equal(p.messages.some(m => ["start", "resume"].includes(m.action)), false);
+  p.context.renderJob({ job: { ...job, autoRun: false, stage: "abandoned" }, running: false });
+  assert.equal(p.el("jobProgress").hidden, true);
+  p.context.renderJob({ job: null, running: false });
+  assert.equal(p.el("jobPanel").hidden, true);
+});
+
 test("remembered setup leaves only article, destination and one save confirmation in the main path", async () => {
   const p = await page({ start: message => {
     const job = uiJob(message.sourceUrl);
@@ -543,6 +633,7 @@ test("content and capture failures expose their concrete reason in the main stat
   for (const [errorCode, error] of [
     ["UNSUPPORTED_CONTENT", "正文包含暂不能完整保存的内容（交互画板），未省略该内容。"],
     ["INVALID_CONTENT", "网页表格行列不完整，未省略单元格。"],
+    ["CONTENT_MISMATCH", "原文中有文字或图片尚未准确转换，已停止保存，避免遗漏或重复。"],
     ["PAGE_CAPTURE_FAILED", "网站暂不允许读取该图片，请保持原网页打开并稍后重试。"]
   ]) {
     const p = await page();
@@ -561,6 +652,15 @@ test("content and capture failures expose their concrete reason in the main stat
     if (errorCode === "UNSUPPORTED_CONTENT") assert.match(p.el("saveHint").textContent, /需要插件支持/);
     else assert.match(p.el("saveHint").textContent, /读取成功后才会创建文档/);
   }
+});
+
+test("remote content mismatches keep the created document recovery guidance", async () => {
+  const p = await page();
+  p.context.renderJob({ job: { ...uiJob(), stage: "copy_created", autoRun: false,
+    copy: { token: "created-document" }, failedStep: "verify_content", errorCode: "CONTENT_MISMATCH",
+    error: "remote mismatch details" }, running: false });
+  assert.match(p.el("jobStatus").textContent, /已创建的文档和保存进度已保留/);
+  assert.equal(p.el("save").textContent, "重试保存");
 });
 
 test("a main content error is rendered as literal text and cannot inject markup", async () => {
