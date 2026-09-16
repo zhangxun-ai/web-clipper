@@ -147,7 +147,11 @@ docx:document:write_only docs:document.media:upload space:document:retrieve offl
 
 后台初始化和保存页首次打开时，自动核实已经报错暂停、且有副本的旧内容任务。本机新增 `get_operation({operation_id})` 只读动作，返回该任务的源标识、来源网址、副本标识、内容核对标记、目标位置和已确认的迁入节点，不返回正文、图片或凭据，不调用写入接口，也不修改任务记录。只有本机证据与浏览器任务全部匹配，并再次通过 `get_node` 核实飞书当前位置后，才同步为完成。普通进度轮询不重复发起核实；旧暂停迁入按上面的严格恢复条件升级一次，其余未完成或证据不匹配时保留原状态，不把内容差异当作可重试写入。其他文章始终可以独立保存。
 
-内容和位置核对完成后，后台使用 `chrome.notifications` 发送成功通知，点击打开对应知识库副本。扩展增加 `notifications` 权限，本地保存通知对应任务与结果，刷新或重启时去重。关闭保存页不影响发送；通知失败不改变任务的成功结果。操作系统或浏览器禁用通知时可能没有桌面横幅，保存页仍可查看结果。接口依据：[Chrome notifications](https://developer.chrome.com/docs/extensions/reference/api/notifications)。
+内容和位置核对完成后，保存页显示绿色勾和固定的“总耗时”，由任务创建时间与最终核对完成时间计算，包含排队、自动重试与恢复等待；刷新不会继续增加。旧任务缺少可靠起止时间，或只读恢复只能证明已完成而无法还原完成时刻时，仅显示核对结果，不推算耗时。
+
+保存页在后台完成时，标签页图标变为绿色圆形白勾，标题为“已完成 · 文章名”。用户回到前台并显示该任务的完成结果后，恢复原图标与“剪存 · 文章名”。已读凭据按任务单独保存于 `feishuClipComplete:<jobId>.viewedAt`，与运行中的任务记录分开；后台轮询不会标记已读，刷新、重启或其他任务的完成不会重新点亮已读标识。
+
+后台使用 `chrome.notifications` 发送一次静默成功通知，包含文章及可靠总耗时，点击打开对应知识库副本并标记已读。若对应任务的保存页正在聚焦窗口的活动标签页中，先抑制通知，待页面渲染完成后确认已读；若在确认前离开或关闭页面，补发通知，焦点事件仅重试通知，不恢复文档写入。完成确认会清除该任务现有通知。扩展沿用 `notifications` 权限，本地保存通知对应任务与结果，刷新或重启时去重。关闭保存页不影响发送；通知失败不改变任务的成功结果。操作系统或浏览器禁用通知时可能没有桌面横幅，保存页仍可查看结果。接口依据：[Chrome notifications](https://developer.chrome.com/docs/extensions/reference/api/notifications)。
 
 后台实际执行后最终失败或耗尽重试时，发送“这篇文章暂未保存完成”通知，点击返回对应来源与目标的剪存页。临时重试和延迟查证不发送失败通知。通知意图与失败状态同时持久化，worker 重启后续发；同一任务、错误码和失败步骤去重。升级前的历史失败没有通知标记，不会突然补发。
 
@@ -214,6 +218,8 @@ npm run test:browser
 测试通过时逐项输出 `PASS` 并以 0 退出。`HEADED=1 npm run test:browser` 可显示测试浏览器；已有 Chrome for Testing 时可用 `CHROMIUM_EXECUTABLE` 指定可执行文件。`feishu-extension.cjs` 启动独立临时配置，加载实际扩展的保存页、service worker、内容脚本；仅飞书接口响应使用固定测试数据。覆盖长代码、图片 CORS 回退、加载中间态、连续保存、默认位置、复用授权、错误呈现、刷新恢复及读取期间切换网页，不接触用户日常浏览器数据。这些场景已在 Chromium 149 及默认测试命令使用的 Chromium 151 上通过。
 
 同一命令接着执行 `feishu-recovery.cjs`：临时复制运行文件，仅在加载正式 `background.js` 前替换测试用 Native Messaging 传输；模拟服务的 journal 留在 Node 测试进程，跨 worker 重启保留。保存位置与任务均由真实 UI 建立。测试一次点击后自动恢复已提交但响应丢失的写入和临时查询失败；`CONTENT_MISMATCH` / `CREATE_UNCERTAIN` 即使被模拟服务错误地标记可重试，也不能重复写入。最后关闭保存页、实际通过 CDP 停止 worker，确认浏览器 alarm 启动新 worker 后沿用同一任务完成，文档创建数始终为 1。
+
+`feishu-completion.cjs` 随 `npm run test:ui` 执行，覆盖后台完成的图标与标题、真实 Chrome 标签 favicon、storage 事件更新、同一原文多请求隔离、返回查看后保持已读、固定耗时、缺少可靠时间及 1100 / 390 / 320px 布局。任务响应为 fixture；测试关闭 Playwright 的焦点模拟，用实际标签切换验证焦点，未伪造 `document.hidden`。`feishu-recovery.cjs` 另经正式 service 验证后台通知、前台完成抑制通知，以及返回页面后的持久已读记录。Chrome 的 `sender.url` 不随页面 `replaceState` 更新，因此已读确认在可信扩展身份和页面路径检查后，使用顶层消息的浏览器提供的 `sender.tab.url` 核对任务路由。
 
 2026-09-08 旧状态同步与通知验收（0.4.3）：确认用户 Dia 中新文章 `22255154882458281` 的保存页显示的是旧操作 `PRIVATE_OPERATION_ID` 的错误。本机记录已完成，实际飞书查询也确认副本和父页面匹配。通过 Dia 扩展管理页重新加载至 0.4.3 后，正式保存页自动同步旧操作为完成、新文章按钮解锁，未点击旧任务的继续或结束。118 项 JavaScript、94 项 Python 及全部 Chromium 浏览器回归通过；浏览器回归覆盖只读同步旧任务、通知去重、点击通知打开结果，以及关闭保存页并终止 worker 后由 alarm 续接完成及生成通知记录。
 

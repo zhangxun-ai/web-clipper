@@ -11,6 +11,7 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
     replaceChildren(...children) { this.children = children; }
     appendChild(child) { this.children.push(child); }
     setAttribute(name, value) { this[name] = value; }
+    getAttribute(name) { return this[name] ?? null; }
     removeAttribute(name) { delete this[name]; }
   }
   const elements = new Map(), calls = [], messages = [], opened = [], delays = [], copied = [];
@@ -20,13 +21,14 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
     get_space: () => ({ space: { space_id: "personal", name: "我的文档库" } }),
     get_node: params => ({ node: { space_id: "123", node_token: params.token, title: "资料", node_type: "origin" } }),
     authorize_start: () => ({ verification_url: "https://accounts.feishu.cn/verify" }),
-    state: () => ({ job: store.job || null, running: false, target: store.target }),
+    state: () => ({ job: store.job || null, running: false, target: store.target, completionViewed: Boolean(store.completionViewed) }),
+    acknowledge_completion: () => { store.completionViewed = true; return { completionViewed: true }; },
     remember_target: message => { store.target = structuredClone(message.target); return store.target; },
     ...overrides
   };
   const location = new URL(`chrome-extension://abcdefghijklmnopabcdefghijklmnop/feishu-save.html?source=https://my.feishu.cn/docx/Source&requestId=${store.requestId || requestId}${store.job ? "&jobId=" + store.job.id : ""}`);
   const context = {
-    document: { getElementById: el, createElement: () => new Element() },
+    document: { getElementById: el, createElement: () => new Element(), visibilityState: "hidden", hasFocus: () => false, addEventListener() {} },
     FeishuWikiClip: clipApi, ConnectorOnboarding: onboarding, URL, URLSearchParams, Map, Set, Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     location, history: { replaceState(_state, _unused, url) { location.href = url; } }, crypto: require("node:crypto").webcrypto, setInterval() {},
     setTimeout(callback, delay) { delays.push(delay); callback(); },
@@ -37,7 +39,7 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
         : handlers[message.operation](message.params)).then(data => callback({ ok: true, data }),
         error => callback({ ok: false, error: error.message, code: error.code, retryable: error.retryable, uncertain: error.uncertain }));
     } }, tabs: { create: async info => opened.push(info.url) } },
-    window: { confirm: () => true }, navigator: { platform: "MacIntel", ...environment.navigator, clipboard: { writeText: async value => copied.push(value) } }
+    window: { confirm: () => true, addEventListener() {} }, navigator: { platform: "MacIntel", ...environment.navigator, clipboard: { writeText: async value => copied.push(value) } }
   };
   vm.runInNewContext(source, context);
   await new Promise(setImmediate);
@@ -330,6 +332,87 @@ test("UI retries exclude authorization, writes, permission failures, and errors 
 function uiJob(sourceUrl = "https://my.feishu.cn/docx/Source", id = "job-ui") {
   return { ...clipApi.createJob(sourceUrl, clipApi.targetFromNode({ space_id: "123", node_token: "Parent", title: "资料" }), id), requestId };
 }
+
+function completedUiJob() {
+  return { ...uiJob(), title: "测试文章", stage: "complete", resultUrl: "https://my.feishu.cn/wiki/Saved",
+    createdAt: "2026-09-16T01:00:00.000Z", completedAt: "2026-09-16T01:02:36.000Z" };
+}
+
+test("completed elapsed time stays frozen and unreliable old timestamps stay hidden", async () => {
+  const p = await page();
+  const job = completedUiJob();
+  p.context.renderJob({ job, running: false });
+  assert.equal(p.el("completionSummary").hidden, false);
+  assert.equal(p.el("jobStatus").hidden, true);
+  assert.equal(p.el("completionTime").textContent, "2 分 36 秒");
+  p.context.renderProgress(Date.now() + 3600000);
+  p.context.renderJob({ job, running: false });
+  assert.equal(p.el("completionTime").textContent, "2 分 36 秒");
+  for (const change of [{ completedAt: undefined }, { completedAt: "invalid" }, { completionTimeUnknown: true }]) {
+    p.context.renderJob({ job: { ...job, ...change }, running: false });
+    assert.equal(p.el("completionSummary").hidden, false);
+    assert.equal(p.el("completionDuration").hidden, true);
+    assert.equal(p.el("completionTime").textContent, "");
+  }
+});
+
+test("only foreground viewing acknowledges the exact completion and keeps its marker cleared", async () => {
+  const p = await page();
+  const job = completedUiJob();
+  p.context.renderJob({ job, running: false });
+  assert.equal(p.context.document.title, "已完成 · 测试文章");
+  assert.equal(p.el("taskFavicon").getAttribute("href"), "icon/save-complete.svg");
+  assert.equal(p.messages.some(m => m.action === "acknowledge_completion"), false);
+  p.context.document.visibilityState = "visible";
+  p.context.acknowledgeCompletion();
+  assert.equal(p.messages.some(m => m.action === "acknowledge_completion"), false);
+  p.context.document.hasFocus = () => true;
+  p.context.acknowledgeCompletion();
+  await new Promise(setImmediate);
+  const acknowledgements = p.messages.filter(m => m.action === "acknowledge_completion");
+  assert.equal(acknowledgements.length, 1);
+  assert.equal(acknowledgements[0].jobId, job.id);
+  assert.equal(acknowledgements[0].requestId, requestId);
+  assert.equal(acknowledgements[0].sourceUrl, job.source.url);
+  assert.equal(acknowledgements[0].targetUrl, job.target.url);
+  assert.equal(p.context.location.searchParams.get("jobId"), job.id);
+  assert.equal(p.context.location.searchParams.get("target"), job.target.url);
+  p.context.document.hasFocus = () => false;
+  p.context.renderJob({ job, running: false, completionViewed: true });
+  assert.equal(p.el("taskFavicon").getAttribute("href"), "icon/32.png");
+  assert.equal(p.context.document.title, "剪存 · 测试文章");
+});
+
+test("a late acknowledgement cannot mark another completed task as read", async () => {
+  let finish;
+  const p = await page({ acknowledge_completion: () => new Promise(resolve => { finish = resolve; }) });
+  const first = completedUiJob();
+  p.context.document.visibilityState = "visible";
+  p.context.document.hasFocus = () => true;
+  p.context.renderJob({ job: first, running: false });
+  await new Promise(setImmediate);
+  p.input("sourceUrl", "https://example.com/new");
+  await new Promise(setImmediate);
+  const second = { ...completedUiJob(), id: "second", requestId: p.context.location.searchParams.get("requestId"),
+    source: { url: "https://example.com/new" }, title: "新文章" };
+  p.context.document.hasFocus = () => false;
+  p.context.renderJob({ job: second, running: false });
+  finish({ completionViewed: true });
+  await new Promise(setImmediate);
+  assert.equal(p.context.document.title, "已完成 · 新文章");
+  assert.equal(p.el("taskFavicon").getAttribute("href"), "icon/save-complete.svg");
+});
+
+test("an exact-job recovery link restores its original request identity before acknowledging", async () => {
+  const job = completedUiJob();
+  const p = await page({}, { job, requestId: "22222222-2222-4222-8222-222222222222", target: job.target });
+  assert.equal(p.context.location.searchParams.get("requestId"), job.requestId);
+  p.context.document.visibilityState = "visible";
+  p.context.document.hasFocus = () => true;
+  p.context.acknowledgeCompletion();
+  await new Promise(setImmediate);
+  assert.equal(p.messages.find(m => m.action === "acknowledge_completion").requestId, job.requestId);
+});
 
 test("save progress exposes actual image counts and labels aggregate import work honestly", async () => {
   const p = await page();

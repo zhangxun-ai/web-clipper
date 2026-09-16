@@ -1,10 +1,40 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { parseDocumentUrl, targetFromNode, createJob, runJob } = require("../shared/feishu-wiki-clip.js");
+const { parseDocumentUrl, targetFromNode, createJob, runJob, completionDuration, formatDuration } = require("../shared/feishu-wiki-clip.js");
 
 const targetNode = { space_id: "1234567890123456789", node_token: "ParentToken", node_type: "origin", title: "剪存资料" };
 const target = targetFromNode(targetNode);
 const finalNode = { ...targetNode, node_token: "SavedWiki", obj_token: "CopiedDoc", obj_type: "docx", parent_node_token: "ParentToken" };
+
+test("completion durations require reliable complete timestamps and share one Chinese formatter", () => {
+  const job = { stage: "complete", createdAt: "2026-09-16T00:00:00.000Z", completedAt: "2026-09-16T00:02:03.456Z" };
+  assert.equal(completionDuration(job), 123456);
+  assert.equal(formatDuration(completionDuration(job)), "2 分 3 秒");
+  assert.equal(formatDuration(0), "0 秒");
+  assert.equal(formatDuration(59999), "59 秒");
+  assert.equal(formatDuration(60000), "1 分 0 秒");
+  assert.equal(formatDuration(3661000), "1 小时 1 分");
+  for (const value of [null, undefined, "1000", NaN, Infinity, -1]) assert.equal(formatDuration(value), "");
+  for (const patch of [{ stage: "verifying" }, { error: "尚未核对" }, { completionTimeUnknown: true },
+    { createdAt: undefined }, { completedAt: undefined }, { completedAt: "invalid" },
+    { completedAt: "2026-09-15T23:59:59Z" }]) assert.equal(completionDuration({ ...job, ...patch }), null);
+  assert.equal(completionDuration(null), null);
+});
+
+test("verified completion captures its actual observation time and later resumes do not change it", async () => {
+  const { job, deps } = fixture();
+  job.createdAt = "2026-09-16T00:00:00.000Z";
+  job.completionTimeUnknown = true;
+  let now = Date.parse("2026-09-16T00:02:03.000Z");
+  deps.now = () => now;
+  await runJob(job, deps);
+  assert.equal(job.completedAt, "2026-09-16T00:02:03.000Z");
+  assert.equal(job.completionTimeUnknown, false);
+  assert.equal(completionDuration(job), 123000);
+  now += 600000;
+  await runJob(job, deps);
+  assert.equal(completionDuration(job), 123000);
+});
 
 function fixture(overrides = {}, source = "https://my.feishu.cn/docx/SourceDoc") {
   const calls = [];

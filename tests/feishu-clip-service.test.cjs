@@ -57,7 +57,7 @@ test("save again cannot replace an existing document or an unrelated failure", a
   }
 });
 
-function service(overrides = {}, persisted = {}, visibleNotifications = {}) {
+function service(overrides = {}, persisted = {}, visibleNotifications = {}, surfaces = { tabs: [], windows: {} }, clock = Date) {
   let listener;
   const calls = [];
   const timers = new Map();
@@ -65,6 +65,8 @@ function service(overrides = {}, persisted = {}, visibleNotifications = {}) {
   const store = structuredClone(persisted), alarms = new Map();
   const notifications = new Map(Object.entries(visibleNotifications)), notificationCalls = [], openedTabs = [];
   let alarmListener, startupListener, notificationClick;
+  const viewEvents = {};
+  const viewEvent = name => ({ addListener: listener => { viewEvents[name] = listener; } });
   const id = "abcdefghijklmnopabcdefghijklmnop";
   const base = `chrome-extension://${id}/`;
   const chrome = { runtime: { id, getURL: (p) => base + p, onMessage: { addListener: (f) => { listener = f; } },
@@ -75,17 +77,21 @@ function service(overrides = {}, persisted = {}, visibleNotifications = {}) {
     notifications: { getAll: async () => Object.fromEntries(notifications),
       create: async (id, options) => { notificationCalls.push({ id, options }); notifications.set(id, true); return id; },
       clear: async id => notifications.delete(id), onClicked: { addListener: f => { notificationClick = f; } } },
-    tabs: { create: async options => { openedTabs.push(structuredClone(options)); return { id: openedTabs.length }; } },
+    tabs: { create: async options => { openedTabs.push(structuredClone(options)); return { id: openedTabs.length }; },
+      query: async query => structuredClone(surfaces.tabs.filter(tab => !query.active || tab.active)),
+      onActivated: viewEvent("activated"), onRemoved: viewEvent("removed"), onUpdated: viewEvent("updated") },
+    windows: { get: async id => structuredClone(surfaces.windows[id] || { focused: false }), onFocusChanged: viewEvent("focused") },
     storage: { local: { get: async () => structuredClone(store), set: async (value) => Object.assign(store, structuredClone(value)) } } };
   vm.runInNewContext(fs.readFileSync(require.resolve("../shared/feishu-clip-service.js"), "utf8"),
-    { chrome, FeishuWikiClip: { ...api, ...overrides }, crypto: require("node:crypto").webcrypto, Set, URL,
+    { chrome, FeishuWikiClip: { ...api, ...overrides }, crypto: require("node:crypto").webcrypto, Set, URL, Date: clock,
       WebImageCapture: { capturePublic: async url => ({ publicUrl: url }) },
       setTimeout: (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; },
       clearTimeout: id => timers.delete(id) });
   const send = (message, sender = { id, url: base + "feishu-save.html" }) => new Promise((resolve) => listener({ type: "feishu-clip", ...message }, sender, resolve));
   return { send, calls, id, base, store, chrome, alarms, alarm: () => alarmListener({ name: "feishuClipAutoResume" }),
     startup: () => startupListener(), notifications, notificationCalls, openedTabs,
-    clickNotification: id => notificationClick(id), timers,
+    clickNotification: id => notificationClick(id), timers, surfaces,
+    viewEvent: (name, ...args) => viewEvents[name](...args),
     wake: () => { const entry = timers.entries().next().value; if (entry) { timers.delete(entry[0]); entry[1].callback(); } } };
 }
 
@@ -212,6 +218,41 @@ test("requires reconfirmation if the parent moved into a different space", async
   assert.equal(result.ok, false);
   assert.match(result.error, /知识库已改变/);
   assert.equal(svc.store.feishuWikiClipJob, undefined);
+});
+
+test("duration starts at trusted message receipt before target checks and queued mutations, and duplicate starts keep it", async () => {
+  const startTime = Date.parse("2026-09-16T00:00:00Z");
+  let now = startTime, finishCheck, targetChecks = 0;
+  class Clock extends Date {
+    constructor(...values) { super(...(values.length ? values : [now])); }
+    static now() { return now; }
+  }
+  const svc = service({ runContentJob: async () => new Promise(() => {}) }, {}, {}, undefined, Clock);
+  svc.chrome.runtime.sendNativeMessage = (_host, message, callback) => {
+    assert.equal(message.action, "get_node");
+    const result = { ok: true, data: { node: { space_id: "123", node_token: "Parent", title: "资料", node_type: "origin" } } };
+    if (++targetChecks === 1) finishCheck = () => callback(result);
+    else callback(result);
+  };
+  const message = { action: "start", sourceUrl: "https://my.feishu.cn/docx/Source", targetUrl: "https://my.feishu.cn/wiki/Parent",
+    expectedSpaceId: "123", requestId: "00000000-0000-4000-8000-000000000001", createdAt: "2000-01-01T00:00:00Z" };
+  const first = svc.send(message);
+  await new Promise(setImmediate);
+  now += 60000;
+  const second = svc.send({ ...message, requestId: "00000000-0000-4000-8000-000000000002" });
+  await new Promise(setImmediate);
+  now += 120000;
+  finishCheck();
+  const a = await first, b = await second;
+  assert.equal(a.ok, true, a.error);
+  assert.equal(b.ok, true, b.error);
+  assert.equal(Date.parse(a.data.job.createdAt), startTime);
+  assert.equal(Date.parse(b.data.job.createdAt), startTime + 60000);
+  now += 60000;
+  const duplicate = await svc.send(message);
+  assert.equal(duplicate.data.job.id, a.data.job.id);
+  assert.equal(duplicate.data.job.createdAt, a.data.job.createdAt);
+  assert.equal(targetChecks, 2);
 });
 
 test("ending a stopped task preserves its copy and recovery information", async () => {
@@ -378,6 +419,224 @@ test("an explicit manual resume grants a fresh retry budget and terminal jobs ca
 const completedJob = (patch = {}) => activeJob({ stage: "complete", autoRun: false, title: "已核对的文章",
   wikiToken: "Saved", resultUrl: "https://my.feishu.cn/wiki/Saved", ...patch });
 
+function completionRoute(job, patch = {}) {
+  const url = new URL("chrome-extension://abcdefghijklmnopabcdefghijklmnop/feishu-save.html");
+  const fields = { source: job.source.url, target: job.target.url, jobId: job.id, requestId: job.requestId || "", ...patch };
+  for (const [key, value] of Object.entries(fields)) if (value !== undefined) url.searchParams.set(key, value);
+  return url.href;
+}
+
+function acknowledge(svc, job, patch = {}, route = completionRoute(job)) {
+  return svc.send({ action: "acknowledge_completion", jobId: job.id, requestId: job.requestId || "",
+    sourceUrl: job.source.url, targetUrl: job.target.url, ...patch }, { id: svc.id, url: route });
+}
+
+test("completion notices include only reliable elapsed time and are silent", async () => {
+  const timestamps = { createdAt: "2026-09-16T00:00:00Z", completedAt: "2026-09-16T00:02:03Z" };
+  for (const unknown of [false, true]) {
+    const svc = service({}, { feishuWikiClipJob: completedJob({ ...timestamps, completionTimeUnknown: unknown }) });
+    await new Promise(setImmediate);
+    assert.equal(svc.notificationCalls[0].options.silent, true);
+    assert.equal(svc.notificationCalls[0].options.message.includes("总耗时 2 分 3 秒"), !unknown);
+    assert.equal((await svc.send({ action: "state" })).data.completionViewed, false);
+  }
+});
+
+test("only the exact request in an active focused non-minimized save page suppresses a notice", async () => {
+  const job = completedJob({ requestId: "view-request" });
+  const cases = [
+    { suppress: true },
+    { route: completionRoute(job, { jobId: undefined }), suppress: true },
+    { active: false }, { focused: false }, { state: "minimized" },
+    { route: completionRoute(job, { requestId: "other-request" }) },
+    { route: completionRoute(job, { jobId: "other-job" }) },
+    { route: completionRoute(job, { source: "https://my.feishu.cn/docx/Other" }) },
+    { route: completionRoute(job, { target: "https://my.feishu.cn/wiki/Other" }) },
+    { pendingUrl: "https://example.com/" },
+    { route: "https://example.com/feishu-save.html" },
+    { missing: true }
+  ];
+  for (const item of cases) {
+    const tab = { id: 8, windowId: 3, active: item.active !== false, url: item.route || completionRoute(job), pendingUrl: item.pendingUrl };
+    const svc = service({}, { feishuWikiClipJob: job }, {}, { tabs: item.missing ? [] : [tab],
+      windows: { 3: { focused: item.focused !== false, state: item.state || "normal" } } });
+    await new Promise(setImmediate);
+    assert.equal(svc.notificationCalls.length, item.suppress ? 0 : 1, JSON.stringify(item));
+    const receipt = svc.store["feishuClipComplete:" + job.id];
+    assert.equal(Boolean(receipt.suppressedAt), Boolean(item.suppress));
+    assert.equal(Boolean(receipt.viewedAt), false);
+    assert.equal((await svc.send({ action: "state" })).data.completionViewed, false);
+  }
+});
+
+test("foreground suppression applies only to its own job and tab-read errors still notify", async () => {
+  const job = completedJob({ requestId: "view-request" });
+  const other = completedJob({ id: "other", requestId: "other-request", wikiToken: "Other", resultUrl: "https://my.feishu.cn/wiki/Other" });
+  const svc = service({}, { feishuWikiClipJobs: [job, other] }, {}, { tabs: [{ id: 8, windowId: 3, active: true, url: completionRoute(job) }], windows: { 3: { focused: true } } });
+  await new Promise(setImmediate);
+  assert.deepEqual(svc.notificationCalls.map(item => item.id), ["feishuClipComplete:other"]);
+  const failing = service({}, { feishuWikiClipJob: job });
+  failing.chrome.tabs.query = async () => { throw new Error("Window closed"); };
+  await new Promise(setImmediate);
+  assert.equal(failing.notificationCalls.length, 1);
+});
+
+test("leaving a suppressed completion before acknowledgement retries exactly once without native work", async () => {
+  for (const event of ["activated", "removed", "updated", "focused"]) {
+    const job = completedJob({ requestId: "view-request" });
+    const svc = service({}, { feishuWikiClipJob: job }, {}, { tabs: [{ id: 8, windowId: 3, active: true, url: completionRoute(job) }], windows: { 3: { focused: true } } });
+    await new Promise(setImmediate);
+    assert.equal(svc.notificationCalls.length, 0);
+    svc.surfaces.tabs = [];
+    svc.viewEvent(event, 8, { url: "https://example.com/" });
+    await new Promise(setImmediate);
+    svc.viewEvent(event, 8, { url: "https://example.com/" });
+    await new Promise(setImmediate);
+    assert.equal(svc.notificationCalls.length, 1, event);
+    assert.equal(svc.calls.length, 0);
+    assert.equal(svc.store.feishuWikiClipJob.autoRun, false);
+  }
+});
+
+test("an exact rendered-result acknowledgement clears only its notice and survives stale saves and restart", async () => {
+  let save;
+  const job = completedJob({ requestId: "view-request" });
+  const svc = service({ runContentJob: async (_job, deps) => { save = deps.save; await new Promise(() => {}); } },
+    { feishuWikiClipJob: activeJob({ requestId: job.requestId }) }, { "feishuClipComplete:other": true });
+  await new Promise(setImmediate);
+  await save(job);
+  const before = structuredClone(svc.store.feishuWikiClipJob);
+  const result = await acknowledge(svc, job);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.data.completionViewed, true);
+  assert.deepEqual(svc.store.feishuWikiClipJob, before);
+  assert.equal(svc.notifications.has("feishuClipComplete:" + job.id), false);
+  assert.equal(svc.notifications.has("feishuClipComplete:other"), true);
+  const viewedAt = svc.store["feishuClipComplete:" + job.id].viewedAt;
+  await save(job);
+  assert.equal(svc.store["feishuClipComplete:" + job.id].viewedAt, viewedAt);
+  assert.equal((await svc.send({ action: "state", jobId: job.id })).data.completionViewed, true);
+  const restarted = service({}, svc.store);
+  assert.equal((await restarted.send({ action: "state", jobId: job.id })).data.completionViewed, true);
+  assert.equal(restarted.notificationCalls.length, 0);
+  assert.equal((await acknowledge(restarted, job)).ok, true);
+  assert.equal(restarted.store["feishuClipComplete:" + job.id].viewedAt, viewedAt);
+});
+
+test("acknowledgement rejects forged tuples, routes, unverified completion and untrusted senders", async () => {
+  const job = completedJob({ requestId: "view-request" });
+  const svc = service({}, { feishuWikiClipJob: job });
+  await new Promise(setImmediate);
+  for (const patch of [{ jobId: "other" }, { requestId: "other" }, { sourceUrl: "https://my.feishu.cn/docx/Other" },
+    { targetUrl: "https://my.feishu.cn/wiki/Other" }, { requestId: undefined }]) {
+    assert.equal((await acknowledge(svc, job, patch)).ok, false);
+  }
+  for (const patch of [{ jobId: "other" }, { requestId: "other" }, { source: "https://my.feishu.cn/docx/Other" }, { target: undefined }]) {
+    assert.equal((await acknowledge(svc, job, {}, completionRoute(job, patch))).ok, false);
+  }
+  assert.equal((await acknowledge(svc, job, {}, svc.base + "popup.html")).ok, false);
+  assert.equal((await svc.send({ action: "acknowledge_completion" }, { id: "foreign", url: completionRoute(job) })).ok, false);
+  assert.equal(Boolean(svc.store["feishuClipComplete:" + job.id].viewedAt), false);
+  for (const patch of [{ stage: "verifying" }, { error: "未核对" }, { resultUrl: "https://my.feishu.cn/wiki/Other" }]) {
+    const unfinished = service({}, { feishuWikiClipJob: completedJob({ requestId: job.requestId, ...patch }) });
+    assert.equal((await acknowledge(unfinished, job)).ok, false);
+  }
+});
+
+test("legacy completed jobs acknowledge with their exact job route and an empty request id", async () => {
+  const job = completedJob();
+  const svc = service({}, { feishuWikiClipJob: job });
+  assert.equal((await acknowledge(svc, job, {}, completionRoute(job, { jobId: undefined }))).ok, false);
+  assert.equal((await acknowledge(svc, job, {}, completionRoute(job, { requestId: "new-page-request" }))).ok, true);
+  assert.equal((await svc.send({ action: "state" })).data.completionViewed, true);
+});
+
+test("Chrome's original sender URL can acknowledge after replaceState only through the matching top-level tab route", async () => {
+  const job = completedJob({ requestId: "view-request" });
+  const svc = service({}, { feishuWikiClipJob: job });
+  const sender = { id: svc.id, url: svc.base + "feishu-save.html?source=" + encodeURIComponent(job.source.url),
+    frameId: 0, documentId: "page-document", documentLifecycle: "active", tab: { id: 8, url: completionRoute(job) } };
+  const message = { action: "acknowledge_completion", jobId: job.id, requestId: job.requestId,
+    sourceUrl: job.source.url, targetUrl: job.target.url };
+  for (const patch of [{ frameId: 1 }, { frameId: undefined }, { documentLifecycle: "prerender" },
+    { documentLifecycle: "cached" }, { url: svc.base + "popup.html" }, { id: "foreign" },
+    { tab: { id: 8, url: completionRoute(job, { jobId: "another-job" }) } },
+    { tab: { id: 8, url: completionRoute(job, { requestId: "another-request" }) } },
+    { tab: { id: 8, url: completionRoute(job, { source: "https://my.feishu.cn/docx/Other" }) } },
+    { tab: { id: 8, url: completionRoute(job, { target: "https://my.feishu.cn/wiki/Other" }) } },
+    { tab: { id: 8, url: completionRoute(job), pendingUrl: "https://example.com" } }]) {
+    assert.equal((await svc.send(message, { ...sender, ...patch })).ok, false, JSON.stringify(patch));
+  }
+  assert.equal((await svc.send({ ...message, targetUrl: "https://my.feishu.cn/wiki/Other" }, sender)).ok, false);
+  const result = await svc.send(message, sender);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.data.completionViewed, true);
+  assert(svc.store["feishuClipComplete:" + job.id].viewedAt);
+});
+
+test("a foreground acknowledgement prevents a suppressed notice after closing the page", async () => {
+  const job = completedJob({ requestId: "view-request" });
+  const svc = service({}, { feishuWikiClipJob: job }, {}, { tabs: [{ id: 8, windowId: 3, active: true, url: completionRoute(job) }], windows: { 3: { focused: true } } });
+  assert.equal((await acknowledge(svc, job)).ok, true);
+  svc.surfaces.tabs = [];
+  svc.viewEvent("removed", 8);
+  await new Promise(setImmediate);
+  assert.equal(svc.notificationCalls.length, 0);
+  assert.equal(svc.store["feishuClipComplete:" + job.id].deliveredAt, "");
+  assert.equal((await svc.send({ action: "state" })).data.completionViewed, true);
+  const restarted = service({}, svc.store);
+  assert.equal((await restarted.send({ action: "state" })).data.completionViewed, true);
+  assert.equal(restarted.notificationCalls.length, 0);
+});
+
+test("an acknowledgement arriving during notification creation cannot lose its receipt", async () => {
+  let save, releaseNotice, noticeStarted;
+  const job = completedJob({ requestId: "view-request" });
+  const svc = service({ runContentJob: async (_job, deps) => { save = deps.save; await new Promise(() => {}); } },
+    { feishuWikiClipJob: activeJob({ requestId: job.requestId }) });
+  await new Promise(setImmediate);
+  const started = new Promise(resolve => { noticeStarted = resolve; });
+  const create = svc.chrome.notifications.create;
+  svc.chrome.notifications.create = async (...args) => {
+    noticeStarted();
+    await new Promise(resolve => { releaseNotice = resolve; });
+    return create(...args);
+  };
+  const completion = save(job);
+  await started;
+  const acknowledgement = acknowledge(svc, job);
+  await new Promise(setImmediate);
+  releaseNotice();
+  await completion;
+  assert.equal((await acknowledgement).ok, true);
+  const receipt = svc.store["feishuClipComplete:" + job.id];
+  assert(receipt.viewedAt);
+  assert(receipt.deliveredAt);
+  assert.equal(svc.notificationCalls.length, 1);
+  assert.equal(svc.notifications.has("feishuClipComplete:" + job.id), false);
+});
+
+test("a focus change during a pending foreground check is retried instead of losing the completion notice", async () => {
+  const job = completedJob({ requestId: "view-request" });
+  const svc = service({}, { feishuWikiClipJob: job }, {}, { tabs: [{ id: 8, windowId: 3, active: true, url: completionRoute(job) }], windows: { 3: { focused: true } } });
+  await new Promise(setImmediate);
+  let releaseWindow, checkStarted;
+  const started = new Promise(resolve => { checkStarted = resolve; });
+  svc.chrome.windows.get = async () => {
+    checkStarted();
+    await new Promise(resolve => { releaseWindow = resolve; });
+    return { focused: true };
+  };
+  svc.viewEvent("focused", 3);
+  await started;
+  svc.surfaces.tabs = [];
+  svc.viewEvent("removed", 8);
+  releaseWindow();
+  await new Promise(setImmediate);
+  assert.equal(svc.notificationCalls.length, 1);
+  assert.equal(svc.calls.length, 0);
+});
+
 test("only a successful final verification sends one notification, even if the completion is saved again", async () => {
   let finish;
   const svc = service({ runContentJob: async (job, deps) => {
@@ -396,6 +655,7 @@ test("only a successful final verification sends one notification, even if the c
   const notification = svc.notificationCalls[0];
   assert.equal(notification.id, "feishuClipComplete:durable-operation");
   assert.equal(notification.options.title, "已保存到飞书");
+  assert.equal(notification.options.silent, true);
   assert.match(notification.options.message, /已核对的文章/);
   assert(svc.store[notification.id].deliveredAt);
   assert.equal(svc.store.feishuWikiClipJob.stage, "complete");
@@ -432,6 +692,7 @@ test("clicking an older success notification opens its verified document after t
   await new Promise(setImmediate);
   assert.deepEqual(svc.openedTabs, [{ url: "https://my.feishu.cn/wiki/Saved", active: true }]);
   assert.equal(svc.notifications.has(id), false);
+  assert(svc.store[id].viewedAt);
   svc.clickNotification("foreign-notification");
   svc.clickNotification("feishuClipComplete:unknown");
   svc.store["feishuClipComplete:invalid"] = { url: "https://evil.example/wiki/Other" };
@@ -499,6 +760,9 @@ test("opening the save page reconciles a stale error with an already verified re
   assert.equal(state.data.job.error, "");
   assert.equal(state.data.job.resultUrl, "https://my.feishu.cn/wiki/Saved");
   assert.equal(state.data.running, false);
+  assert.equal(state.data.job.completedAt, undefined);
+  assert.equal(state.data.job.completionTimeUnknown, true);
+  assert.equal(api.completionDuration(state.data.job), null);
   assert.deepEqual(actions, ["get_operation", "get_node"]);
   assert.equal(starts, 0);
   assert.equal(svc.notificationCalls.length, 1);

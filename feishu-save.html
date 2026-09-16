@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>剪存到飞书知识库</title>
+    <link id="taskFavicon" rel="icon" type="image/png" href="icon/32.png">
     <link rel="stylesheet" href="popup.css">
     <link rel="stylesheet" href="feishu-save.css">
   </head>
@@ -58,9 +59,16 @@
       </section>
 
       <section id="jobPanel" class="panel workspace-panel" aria-labelledby="jobHeading" hidden>
-        <div class="panel-head"><h2 id="jobHeading">正在保存</h2></div>
+        <div class="panel-head job-heading">
+          <span id="completionIcon" class="completion-icon" aria-hidden="true" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m7.5 12 3 3 6-6" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <h2 id="jobHeading">正在保存</h2>
+        </div>
         <p id="jobTitle" class="hint"></p>
         <p id="jobStatus" class="status status-loading" role="status"></p>
+        <div id="completionSummary" class="completion-summary" role="status" hidden>
+          <span id="completionDuration" class="completion-duration" hidden>总耗时 <strong id="completionTime"></strong></span>
+          <span>已核对图文与位置</span>
+        </div>
         <div id="jobProgress" class="job-progress" hidden>
           <div class="progress-heading" role="status" aria-atomic="true">
             <strong id="progressPhase"></strong>

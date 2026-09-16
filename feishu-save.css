@@ -328,6 +328,44 @@ body {
   margin: 20px 0 16px;
 }
 
+.clip-app .job-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.clip-app .completion-icon {
+  display: flex;
+  flex: none;
+  color: var(--ui-success);
+}
+
+.clip-app .completion-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 16px 0 20px;
+  padding: 14px 16px;
+  border-radius: var(--ui-radius);
+  background: var(--ui-success-soft);
+  color: var(--ui-success);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.clip-app .completion-duration {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.clip-app #completionTime {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .clip-app .progress-heading {
   display: flex;
   flex-wrap: wrap;

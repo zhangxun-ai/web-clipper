@@ -195,7 +195,9 @@
       && (running || (job.stage === "ready" && pending.length > 1)));
     // The selected page owns these fields. A save on a different page must not
     // disable this article's button or display another article's progress.
-    return { job, target: queue.target, running: Boolean(job && (running?.jobId === job.id || autoEligible(job))),
+    const receipt = job ? (await chrome.storage.local.get(NOTIFICATION_PREFIX + job.id))[NOTIFICATION_PREFIX + job.id] : null;
+    return { job, completionViewed: Boolean(verifiedCompletion(job) && receipt?.viewedAt),
+      target: queue.target, running: Boolean(job && (running?.jobId === job.id || autoEligible(job))),
       queued, queuePosition: queued ? pending.filter(item => item.id !== running?.jobId).findIndex(item => item.id === job.id) + 1 : 0,
       activeJobId: running?.jobId || "", pendingCount: pending.length, jobs: queue.jobs };
   }
@@ -249,25 +251,75 @@
     if (notifyFailure) await notifyFailed(job);
   }
 
-  async function notifyComplete(job) {
-    if (job?.stage !== "complete" || job.error || !job.id || !job.wikiToken || !chrome.notifications) return;
+  function verifiedCompletion(job) {
+    if (job?.stage !== "complete" || job.error || !job.id || !job.wikiToken) return null;
     try {
       const result = api.parseDocumentUrl(job.resultUrl, true);
-      if (result.origin !== job.target?.origin || result.token !== job.wikiToken) return;
-      const id = NOTIFICATION_PREFIX + job.id;
-      const record = (await chrome.storage.local.get(id))[id];
-      if (record?.deliveredAt) return;
-      // Keep the verified link independently of the current job so an older
-      // notification still opens its own document after another save begins.
-      const pending = { url: result.url, deliveredAt: "" };
-      await chrome.storage.local.set({ [id]: pending });
-      // A worker may stop after Chrome shows the notification but before the
-      // delivery marker is saved. Reuse its stable id without showing it twice.
-      if (!(await chrome.notifications.getAll())[id]) {
-        await chrome.notifications.create(id, { type: "basic", iconUrl: chrome.runtime.getURL("icon/128.png"),
-          title: "已保存到飞书", message: `${job.title || "文档"}\n已存入${job.target.title || "所选知识库"}，点击打开。` });
+      return result.origin === job.target?.origin && result.token === job.wikiToken ? result : null;
+    } catch (_) { return null; }
+  }
+
+  function completionPageMatches(url, job) {
+    try {
+      if (url?.split(/[?#]/)[0] !== chrome.runtime.getURL("feishu-save.html")) return false;
+      const params = new URL(url).searchParams;
+      if (params.get("source") !== job.source?.url || params.get("target") !== job.target?.url) return false;
+      if (params.has("jobId") && params.get("jobId") !== job.id) return false;
+      // New saves have request ids before their first job exists. Old recovery
+      // pages must name the exact job instead of borrowing a fresh page request.
+      return job.requestId ? params.get("requestId") === job.requestId : params.get("jobId") === job.id;
+    } catch (_) { return false; }
+  }
+
+  function completionSenderMatches(sender, job) {
+    // Chrome keeps sender.url at document creation even after replaceState.
+    // For top-level extension tabs its browser-supplied tab.url carries the
+    // current route. Never borrow that route for a subframe or inactive document.
+    if (sender.tab) {
+      return sender.frameId === 0 && (!sender.documentLifecycle || sender.documentLifecycle === "active")
+        && completionPageMatches(sender.tab.url, job)
+        && (!sender.tab.pendingUrl || completionPageMatches(sender.tab.pendingUrl, job));
+    }
+    return completionPageMatches(sender.url, job);
+  }
+
+  async function completionPageInForeground(job) {
+    if (!chrome.tabs?.query || !chrome.windows?.get) return false;
+    try {
+      for (const tab of await chrome.tabs.query({ active: true })) {
+        if (!tab.active || !completionPageMatches(tab.url, job)
+          || tab.pendingUrl && !completionPageMatches(tab.pendingUrl, job)) continue;
+        const window = await chrome.windows.get(tab.windowId);
+        if (window.focused && window.state !== "minimized") return true;
       }
-      await chrome.storage.local.set({ [id]: { ...pending, deliveredAt: new Date().toISOString() } });
+    } catch (_) { /* An unavailable tab/window is not evidence that the result is visible. */ }
+    return false;
+  }
+
+  async function notifyComplete(job) {
+    const result = verifiedCompletion(job);
+    if (!result || !chrome.notifications) return;
+    try {
+      await mutate(async () => {
+        const id = NOTIFICATION_PREFIX + job.id;
+        const record = (await chrome.storage.local.get(id))[id];
+        if (record?.deliveredAt || record?.viewedAt) return;
+        // Receipts live outside the running job: a late save of the job cannot
+        // erase a page acknowledgement or replay an already delivered notice.
+        const pending = { ...record, url: result.url, deliveredAt: "" };
+        if (await completionPageInForeground(job)) {
+          if (!record?.suppressedAt) await chrome.storage.local.set({ [id]: { ...pending, suppressedAt: new Date().toISOString() } });
+          return; // Only a rendered-result acknowledgement marks it as viewed.
+        }
+        await chrome.storage.local.set({ [id]: pending });
+        // Stable ids recover a crash between Chrome delivery and this receipt.
+        if (!(await chrome.notifications.getAll())[id]) {
+          const duration = api.completionDuration(job);
+          await chrome.notifications.create(id, { type: "basic", iconUrl: chrome.runtime.getURL("icon/128.png"), silent: true,
+            title: "已保存到飞书", message: `${job.title || "文档"}\n已存入${job.target.title || "所选知识库"}。${duration === null ? "" : `总耗时 ${api.formatDuration(duration)}。`}点击打开。` });
+        }
+        await chrome.storage.local.set({ [id]: { ...pending, deliveredAt: new Date().toISOString() } });
+      });
     } catch (_) {
       // Notification failures must never invalidate a completed, verified save.
       // The durable completed job permits another attempt on worker startup.
@@ -334,6 +386,12 @@
         url = api.parseDocumentUrl(record.url, true).url;
       }
       await chrome.tabs.create({ url, active: true });
+      if (id.startsWith(NOTIFICATION_PREFIX)) {
+        await mutate(async () => {
+          const latest = (await chrome.storage.local.get(id))[id];
+          if (latest?.url === url) await chrome.storage.local.set({ [id]: { ...latest, viewedAt: latest.viewedAt || new Date().toISOString() } });
+        });
+      }
       await chrome.notifications.clear(id);
     })().catch(() => {});
   });
@@ -424,7 +482,10 @@
       api.verifyNode(recovered, node);
       const complete = { ...recovered, wikiToken: operation.wiki_token, resultUrl: result.url, stage: "complete",
         error: "", errorCode: "", uncertain: false, autoRun: false, retryable: false, retryExhausted: false,
-        retryCount: 0, nextRetryAt: 0, completedAt: job.completedAt || new Date().toISOString() };
+        retryCount: 0, nextRetryAt: 0,
+        // The host proves completion, not when the browser last observed it.
+        // Discovery after a restart must never become a fabricated total time.
+        completionTimeUnknown: api.completionDuration({ ...job, stage: "complete", error: "" }) === null };
       await saveJob(complete);
       return complete;
     } catch (_) {
@@ -466,11 +527,47 @@
   });
   chrome.runtime.onStartup?.addListener(() => recoverAutoJob({ reconcile: true }).catch(() => {}));
 
-  async function dispatch(message) {
+  let completionRefresh = null;
+  let completionRefreshAgain = false;
+  function refreshCompletionNotices() {
+    if (completionRefresh) { completionRefreshAgain = true; return; }
+    completionRefresh = Promise.resolve().then(async () => {
+      await initialized;
+      do {
+        completionRefreshAgain = false;
+        for (const job of (await storedQueue()).jobs) await notifyComplete(job);
+      } while (completionRefreshAgain);
+    }).catch(() => {}).finally(() => { completionRefresh = null; });
+  }
+  // If a page was closed or left before it acknowledged rendering the result,
+  // retry only its notice; foreground changes must never resume native writes.
+  chrome.tabs?.onActivated?.addListener(refreshCompletionNotices);
+  chrome.tabs?.onRemoved?.addListener(refreshCompletionNotices);
+  chrome.tabs?.onUpdated?.addListener((_id, changes) => {
+    if (changes.url || changes.status === "complete") refreshCompletionNotices();
+  });
+  chrome.windows?.onFocusChanged?.addListener(refreshCompletionNotices);
+
+  async function dispatch(message, sender, receivedAt) {
     await initialized;
     if (message.action === "state") {
       if (message.reconcile === true) await recoverAutoJob({ reconcile: true });
       return snapshot(message);
+    }
+    if (message.action === "acknowledge_completion") {
+      await mutate(async () => {
+        const job = (await storedQueue()).jobs.find(item => item.id === message.jobId);
+        const result = verifiedCompletion(job);
+        if (!result || message.requestId !== (job.requestId || "") || message.sourceUrl !== job.source?.url
+          || message.targetUrl !== job.target?.url || !completionSenderMatches(sender, job)) {
+          throw new Error("完成记录与当前保存页面不一致，请刷新后重试。");
+        }
+        const id = NOTIFICATION_PREFIX + job.id;
+        const record = (await chrome.storage.local.get(id))[id];
+        await chrome.storage.local.set({ [id]: { ...record, url: result.url, viewedAt: record?.viewedAt || new Date().toISOString() } });
+        await chrome.notifications?.clear(id);
+      });
+      return { completionViewed: true };
     }
     if (message.action === "remember_target") {
       // This is only a local preference from our trusted page after get_node
@@ -558,6 +655,9 @@
               throw new Error("父页面所在的知识库已改变，请重新确认保存位置。");
             }
             const job = api.createJob(source.url, target, crypto.randomUUID());
+            // Include queueing and the first target check. The trusted message
+            // receipt supplies this time; pages cannot backdate a save request.
+            job.createdAt = new Date(receivedAt).toISOString();
             job.requestId = requestId;
             if (Number.isInteger(message.sourceTabId) && message.sourceTabId > 0) job.sourceTabId = message.sourceTabId;
             job.autoRun = true;
@@ -583,7 +683,7 @@
       sendResponse({ ok: false, error: "此操作只能从插件的飞书剪存页发起。" });
       return false;
     }
-    dispatch(message).then((data) => sendResponse({ ok: true, data }))
+    dispatch(message, sender, Date.now()).then((data) => sendResponse({ ok: true, data }))
       .catch((error) => sendResponse({ ok: false, error: error.message, code: error.code,
         retryable: error.retryable === true, uncertain: Boolean(error.uncertain) }));
     return true;

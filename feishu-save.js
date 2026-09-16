@@ -20,6 +20,9 @@ let sourceTitleUrl = "";
 let rememberedTarget = null;
 let lastStateReceivedAt = Date.now();
 let stateSyncError = "";
+let refreshPending = false;
+const viewedCompletions = new Set();
+const acknowledgements = new Set();
 // A new save page is a new user request, even for the same article. Reloading
 // this page or following its failure notification stays on the exact request.
 const route = new URL(location.href);
@@ -85,6 +88,7 @@ function setText(id, message) {
 }
 
 function request(action, details = {}) {
+  if (action === "start") syncTaskRoute(details.sourceUrl, details.targetUrl);
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ type: "feishu-clip", action,
       ...(["state", "start"].includes(action) ? { requestId: activeRequestId, ...(action === "state" && requestedJobId ? { jobId: requestedJobId } : {}) } : {}), ...details }, (response) => {
@@ -228,10 +232,69 @@ const IMPORT_PHASES = {
 };
 
 function duration(milliseconds) {
-  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
-  if (seconds < 60) return `${seconds} 秒`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
-  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`;
+  return clipApi.formatDuration(milliseconds);
+}
+
+function syncTaskRoute(sourceUrl, targetUrl, jobId, requestId) {
+  const url = new URL(location.href);
+  url.searchParams.set("source", sourceUrl);
+  url.searchParams.set("target", targetUrl);
+  if (jobId) url.searchParams.set("jobId", jobId);
+  if (requestId && requestedJobId === jobId) {
+    activeRequestId = requestId;
+    url.searchParams.set("requestId", requestId);
+  }
+  if (url.href !== location.href) history.replaceState(null, "", url.href);
+}
+
+function viewingPage() {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+function renderTabStatus() {
+  const job = currentJob();
+  const completed = job?.stage === "complete" && !job.error && !$("resultLink").hidden;
+  const unread = completed && !latestState.completionViewed && !viewedCompletions.has(job.id) && !viewingPage();
+  const icon = $("taskFavicon");
+  const path = unread ? "icon/save-complete.svg" : "icon/32.png";
+  if (icon.getAttribute("href") !== path) {
+    icon.type = unread ? "image/svg+xml" : "image/png";
+    icon.setAttribute("href", path);
+  }
+  const title = job?.title || "文章";
+  document.title = !job ? "剪存到飞书知识库" : unread ? `已完成 · ${title}`
+    : completed || job.stage === "abandoned" ? `剪存 · ${title}`
+    : latestState.running || job.autoRun ? `保存中 · ${title}` : `需处理 · ${title}`;
+}
+
+function acknowledgeCompletion() {
+  const job = currentJob();
+  if (!job || job.stage !== "complete" || job.error || $("resultLink").hidden || $("completionSummary").hidden || !viewingPage()) return;
+  // Local viewing is immediate; only a confirmed receipt survives a reload.
+  // A failed receipt write may retry without flashing the unread icon again.
+  viewedCompletions.add(job.id);
+  renderTabStatus();
+  if (latestState.completionViewed || acknowledgements.has(job.id)) return;
+  acknowledgements.add(job.id);
+  request("acknowledge_completion", { jobId: job.id, requestId: job.requestId || "",
+    sourceUrl: job.source.url, targetUrl: job.target.url }).then(result => {
+    if (currentJob()?.id === job.id && result?.completionViewed) {
+      latestState.completionViewed = true;
+      renderTabStatus();
+    }
+  }).catch(() => {}).finally(() => acknowledgements.delete(job.id));
+}
+
+function renderCompletion(job) {
+  const completed = job?.stage === "complete" && !job.error && !$("resultLink").hidden;
+  $("completionIcon").hidden = !completed;
+  $("completionSummary").hidden = !completed;
+  $("jobStatus").hidden = Boolean(completed);
+  const elapsed = completed ? clipApi.completionDuration(job) : null;
+  $("completionDuration").hidden = elapsed === null;
+  setText("completionTime", elapsed === null ? "" : duration(elapsed));
+  renderTabStatus();
+  if (completed) acknowledgeCompletion();
 }
 
 function renderProgress(now = Date.now()) {
@@ -311,6 +374,7 @@ function renderJob(state) {
     $("endTask").hidden = true;
     $("jobDetails").open = false;
     updateSaveButton();
+    renderCompletion(null);
     return;
   }
   $("jobTitle").textContent = `${job.title || job.source.url} → ${job.target.spaceName ? `${job.target.spaceName} / ` : ""}${job.target.title}`;
@@ -356,10 +420,12 @@ function renderJob(state) {
   trustedLink($("copyLink"), job.copy?.url);
   if (completed) $("copyLink").hidden = true;
   updateSaveButton();
+  syncTaskRoute(job.source.url, job.target.url, job.id, job.requestId);
+  renderCompletion(job);
 }
 
 async function refreshState() {
-  if (polling) return;
+  if (polling) { refreshPending = true; return; }
   polling = true;
   const sourceUrl = currentSourceUrl();
   const requestIdentity = `${activeRequestId}:${requestedJobId}`;
@@ -375,7 +441,10 @@ async function refreshState() {
       stateSyncError = error.code || "STATE_UNAVAILABLE";
       renderProgress();
     }
-  } finally { polling = false; }
+  } finally {
+    polling = false;
+    if (refreshPending) { refreshPending = false; void refreshState(); }
+  }
 }
 
 async function confirmTarget({ remember = true } = {}) {
@@ -508,6 +577,7 @@ $("targetUrl").addEventListener("input", () => {
   targetGeneration += 1;
   targetNeedsRemember = true;
   selectedTarget = null;
+  renderJob(latestState);
   $("resolveTarget").textContent = "使用此位置";
   $("resolveTarget").disabled = false;
   status("targetSummary", "位置已修改，确认后将记为下次的默认位置。");
@@ -653,3 +723,15 @@ async function init() {
 init().catch(connectionError);
 setInterval(() => refreshState().catch(() => {}), 2000);
 setInterval(() => renderProgress(), 1000);
+
+// Storage events reach background tabs without relying on throttled timers.
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === "local" && (changes.feishuWikiClipJobs || changes.feishuWikiClipJob
+    || changes[`feishuClipComplete:${currentJob()?.id}`])) void refreshState();
+});
+function onPageViewed() {
+  acknowledgeCompletion();
+  void refreshState();
+}
+document.addEventListener("visibilitychange", onPageViewed);
+window.addEventListener("focus", onPageViewed);

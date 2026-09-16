@@ -97,6 +97,21 @@
       wikiToken: "", error: "", uncertain: false, autoRun: false, retryCount: 0, nextRetryAt: 0, createdAt: new Date().toISOString() };
   }
 
+  function completionDuration(job) {
+    if (job?.stage !== "complete" || job.error || job.completionTimeUnknown
+      || typeof job.createdAt !== "string" || typeof job.completedAt !== "string") return null;
+    const start = Date.parse(job.createdAt), end = Date.parse(job.completedAt);
+    return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : null;
+  }
+
+  function formatDuration(milliseconds) {
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) return "";
+    const seconds = Math.floor(milliseconds / 1000);
+    if (seconds < 60) return `${seconds} 秒`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+    return `${Math.floor(seconds / 3600)} 小时 ${Math.floor(seconds % 3600 / 60)} 分`;
+  }
+
   function verifyNode(job, node) {
     if (!node || node.obj_type !== "docx" || node.obj_token !== job.copy?.token
       || node.obj_token === job.sourceToken || String(node.space_id) !== job.target.spaceId
@@ -175,7 +190,8 @@
         verifyNode(job, node);
         const resultUrl = parseDocumentUrl(`${job.target.origin}/wiki/${node.node_token}`, true).url;
         await persist({ resultUrl, stage: "complete", error: "", errorCode: "", autoRun: false,
-          retryable: false, nextRetryAt: 0, nextRunAt: 0, moveRecovering: false, uncertain: false, completedAt: new Date().toISOString() });
+          retryable: false, nextRetryAt: 0, nextRunAt: 0, moveRecovering: false, uncertain: false,
+          completedAt: new Date(now()).toISOString(), completionTimeUnknown: false });
       }
     } catch (error) {
       const migration = Boolean(job.copy?.token && ["moving", "pending", "verifying"].includes(job.stage));
@@ -317,7 +333,8 @@
     }
   }
 
-  const api = { parseDocumentUrl, parseSourceUrl, targetFromNode, createJob, verifyNode, runJob, runContentJob };
+  const api = { parseDocumentUrl, parseSourceUrl, targetFromNode, createJob, verifyNode,
+    completionDuration, formatDuration, runJob, runContentJob };
   scope.FeishuWikiClip = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

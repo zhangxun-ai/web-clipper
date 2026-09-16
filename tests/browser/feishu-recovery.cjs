@@ -200,14 +200,42 @@ async function runScenario(directory, scenario) {
     });
     const worker = context.serviceWorkers()[0] || await context.waitForEvent("serviceworker");
     const id = new URL(worker.url()).host;
+    const elsewhere = await context.newPage();
+    async function newSavePage() {
+      const page = await context.newPage();
+      // Playwright normally reports focus for every page, including background
+      // tabs. Use actual tab focus so these background-notification scenarios
+      // cannot accidentally acknowledge an unseen result.
+      const session = await context.newCDPSession(page);
+      await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+      await page.addInitScript(() => {
+        window.completionAcks = [];
+        const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+        chrome.runtime.sendMessage = (message, callback) => {
+          if (message.action !== "acknowledge_completion") return send(message, callback);
+          return send(message, response => {
+            completionAcks.push({ message, response });
+            callback(response);
+          });
+        };
+      });
+      return page;
+    }
+    async function openSavePage(page, url) {
+      await page.goto(url);
+      // Extension navigation swaps renderers and Playwright reinstalls its
+      // emulation, so disable it again on the actual extension document.
+      const session = await context.newCDPSession(page);
+      await session.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+    }
     const source = await context.newPage();
     await source.goto(`https://scys.com/articleDetail/xq_topic/${scenario}`);
     const sourceTabId = await worker.evaluate(async url => (await chrome.tabs.query({ url }))[0].id, source.url());
-    let save = await context.newPage();
+    let save = await newSavePage();
     const saveUrl = `chrome-extension://${id}/feishu-save.html?${new URLSearchParams({ source: source.url(), sourceTabId: String(sourceTabId) })}`;
     // Select the parent through the actual UI. No fixture writes a job or target
     // directly into storage, nor calls the start/resume service APIs itself.
-    await save.goto(saveUrl);
+    await openSavePage(save, saveUrl);
     await save.locator('#connectionPanel[data-state="connected"]').waitFor();
     await save.locator("#targetUrl").fill(parentUrl);
     await save.locator("#resolveTarget").click();
@@ -230,6 +258,9 @@ async function runScenario(directory, scenario) {
     }, sourceUrl);
     const readJob = () => readFrom(save, source.url());
     await save.locator("#save").click();
+    const staysForeground = scenario === "transient-verification";
+    if (staysForeground) await save.bringToFront();
+    else await elsewhere.bringToFront();
     const first = await until(readJob, job => Boolean(job), "No job after one save click");
     const jobId = first.id;
     const resumeUrl = new URL(saveUrl);
@@ -238,12 +269,13 @@ async function runScenario(directory, scenario) {
       const extraSource = await context.newPage();
       await extraSource.goto(`https://scys.com/articleDetail/xq_topic/${scenario}-${suffix}`);
       const extraTabId = await save.evaluate(async url => (await chrome.tabs.query({ url }))[0].id, extraSource.url());
-      const page = await context.newPage();
-      await page.goto(`chrome-extension://${id}/feishu-save.html?${new URLSearchParams({ source: extraSource.url(), sourceTabId: String(extraTabId) })}`);
+      const page = await newSavePage();
+      await openSavePage(page, `chrome-extension://${id}/feishu-save.html?${new URLSearchParams({ source: extraSource.url(), sourceTabId: String(extraTabId) })}`);
       await page.waitForFunction(() => !document.getElementById("save").disabled);
       assert.equal(await page.locator("#jobPanel").isVisible(), false, "A new article inherited the older migration's status");
       assert.equal(await page.locator("#targetUrl").inputValue(), parentUrl);
       await page.locator("#save").click();
+      await elsewhere.bringToFront();
       const job = await until(() => readFrom(page, extraSource.url()), value => Boolean(value), "No task after one click on a new article");
       return { page, source: extraSource, jobId: job.id, read: () => readFrom(page, extraSource.url()) };
     }
@@ -311,8 +343,8 @@ async function runScenario(directory, scenario) {
       assert.notEqual(moves[0].workerGeneration, moves[1].workerGeneration);
       await until(() => fixture.state.notifications.filter(notice => notice.id === `feishuClipComplete:${jobId}`).length,
         count => count === 1, "No real notification call while the save page was closed");
-      save = await context.newPage();
-      await save.goto(resumeUrl.href);
+      save = await newSavePage();
+      await openSavePage(save, resumeUrl.href);
     }
 
     if (scenario === "worker-restart") {
@@ -340,8 +372,8 @@ async function runScenario(directory, scenario) {
         (await chrome.storage.local.get(id))[id], `feishuClipComplete:${jobId}`), value => Boolean(value?.deliveredAt),
       "No completion notification while the save page is closed");
       assert.equal(delivered.url, "https://my.feishu.cn/wiki/SavedCreated1");
-      save = await context.newPage();
-      await save.goto(resumeUrl.href);
+      save = await newSavePage();
+      await openSavePage(save, resumeUrl.href);
     }
 
     const terminal = await until(readJob, job => job?.id === jobId && (job.stage === "complete" || job.error && !job.autoRun), "Automatic task did not reach a terminal state", 25000);
@@ -391,6 +423,7 @@ async function runScenario(directory, scenario) {
         save.on("dialog", async dialog => { dialogs++; await dialog.dismiss(); });
         assert.match(await save.locator("#saveHint").innerText(), /点击重新保存.*图文会复用/);
         await save.locator("#save").click();
+        await elsewhere.bringToFront();
         const resaved = await until(readJob, job => job?.stage === "complete", "One explicit re-save did not finish", 20000);
         assert.equal(resaved.id, jobId);
         assert.equal(dialogs, 0, "The re-save click must not require another confirmation");
@@ -431,11 +464,19 @@ async function runScenario(directory, scenario) {
       await save.waitForFunction(() => document.getElementById("jobStatus").textContent.includes("保存成功"));
       assert.equal(await save.locator("#resultLink").getAttribute("href"), terminal.resultUrl);
       const notification = await until(() => save.evaluate(async id => (await chrome.storage.local.get(id))[id],
-        `feishuClipComplete:${jobId}`), value => Boolean(value?.deliveredAt), "No completion notification");
+        `feishuClipComplete:${jobId}`), value => Boolean(staysForeground ? value?.viewedAt : value?.deliveredAt), "No completion receipt");
       assert.equal(notification.url, terminal.resultUrl);
-      assert.equal(fixture.state.notifications.filter(notice => notice.id === `feishuClipComplete:${jobId}`).length, 1);
+      assert.equal(fixture.state.notifications.filter(notice => notice.id === `feishuClipComplete:${jobId}`).length, staysForeground ? 0 : 1);
       assert.equal(fixture.state.notifications.filter(notice => notice.title === "这篇文章暂未保存完成").length, 0,
         "A recovered transient fault should not send a terminal failure notification");
+      await save.bringToFront();
+      await until(() => save.evaluate(async id => ({ receipt: (await chrome.storage.local.get(id))[id],
+        focused: document.hasFocus(), visible: !document.hidden, url: location.href,
+        summaryHidden: document.getElementById("completionSummary").hidden, acks: completionAcks }),
+        `feishuClipComplete:${jobId}`), value => Boolean(value?.receipt?.viewedAt), "Returning to the real save page did not acknowledge its completed task");
+      await save.reload();
+      await save.locator("#completionSummary").waitFor();
+      assert.equal(await save.locator("#taskFavicon").getAttribute("href"), "icon/32.png");
       console.log(`PASS: ${scenario} completes after one save click with one created document`);
     }
     assert(!fixture.state.calls.some(call => call.action.startsWith("authorize_")));
