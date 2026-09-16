@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import struct
 import time
 import uuid
 from urllib.parse import unquote, urlsplit
@@ -487,7 +488,19 @@ class ContentImporter:
                         self.web_number(width)
                 if any(type(prop[key]) is not bool for key in ("header_row", "header_column") if key in prop):
                     self.fail("网页表格标题样式无效。", "INVALID_PARAMS")
-            elif kind in (19, 24, 25):
+            elif kind == 19:
+                self.web_object(payload, ("background_color", "border_color", "text_color", "emoji_id"))
+                for key, maximum in (("background_color", 15), ("border_color", 7), ("text_color", 7)):
+                    if key in payload:
+                        self.web_number(payload[key], 1, maximum)
+                # Browser adapters deliberately emit this small official set;
+                # unknown source emoji remain text instead of inventing an icon.
+                if "emoji_id" in payload and payload["emoji_id"] not in (
+                        "bulb", "white_check_mark", "memo", "pushpin", "exclamation", "gift"):
+                    self.fail("网页高亮块表情标识无效。", "INVALID_PARAMS")
+                if not block.get("children"):
+                    self.fail("网页高亮块缺少正文子块。", "INVALID_PARAMS")
+            elif kind in (24, 25):
                 # These container variants need platform-specific layout data;
                 # browser extraction emits a quote container instead.
                 self.fail("网页布局容器尚未支持，请重新读取正文。", "UNSUPPORTED_CONTENT")
@@ -546,12 +559,17 @@ class ContentImporter:
         expected = {item["block_id"]: item for item in images}
         seen = set()
         for item in supplied:
-            self.web_object(item, ("block_id", "url", "width", "height"), ("block_id", "url"))
+            self.web_object(item, ("block_id", "url", "width", "height", "display_width"), ("block_id", "url"))
             block_id = self.identifier(item["block_id"])
             if block_id not in expected or block_id in seen:
                 self.fail("网页图片不属于正文或出现重复绑定。", "IMAGE_FORBIDDEN")
             seen.add(block_id)
             expected[block_id]["url"] = self.web_url(item["url"], image=True)
+            if "display_width" in item:
+                value = item["display_width"]
+                if type(value) not in (int, float) or not 0 < value <= 100000:
+                    self.fail("网页图片显示宽度无效。", "INVALID_PARAMS")
+                expected[block_id]["display_width"] = value
             for key in ("width", "height"):
                 if key in item:
                     self.web_number(item[key])
@@ -684,7 +702,7 @@ class ContentImporter:
         return True
 
     def summary(self, record, plan, operation=None):
-        images = [{key: image[key] for key in ("block_id", "token", "width", "height", "align", "staged", "url") if key in image}
+        images = [{key: image[key] for key in ("block_id", "token", "width", "height", "pixel_width", "pixel_height", "display_width", "align", "staged", "url") if key in image}
                   for image in plan["images"]]
         return {"title": plan["title"], "source_token": plan["source"], "block_count": len(plan["blocks"]) + 1,
                 "image_count": len(images), "batch_count": len(plan["batches"]), "images": images,
@@ -712,6 +730,99 @@ class ContentImporter:
                 (mime == "image/webp" and data[:4] == b"RIFF" and data[8:12] == b"WEBP") or
                 (mime == "image/bmp" and data.startswith(b"BM")))
 
+    @staticmethod
+    def staged_pixel_size(path):
+        """Read dimensions of a legacy staged image without decoding/re-encoding it."""
+        with path.open("rb") as stream:
+            header = stream.read(32)
+            if header.startswith(b"\x89PNG\r\n\x1a\n") and header[12:16] == b"IHDR" and len(header) >= 24:
+                return struct.unpack(">II", header[16:24])
+            if header[:6] in (b"GIF87a", b"GIF89a") and len(header) >= 10:
+                return struct.unpack("<HH", header[6:10])
+            if header[:2] == b"BM" and len(header) >= 26:
+                dib = int.from_bytes(header[14:18], "little")
+                if dib == 12:
+                    return struct.unpack("<HH", header[18:22])
+                if dib >= 40:
+                    width, height = struct.unpack("<ii", header[18:26])
+                    return width, abs(height)
+            if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+                if header[12:16] == b"VP8X" and len(header) >= 30:
+                    return (1 + int.from_bytes(header[24:27], "little"), 1 + int.from_bytes(header[27:30], "little"))
+                if header[12:16] == b"VP8L" and len(header) >= 25 and header[20] == 0x2f:
+                    bits = int.from_bytes(header[21:25], "little")
+                    return (bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1
+                if header[12:16] == b"VP8 " and header[23:26] == b"\x9d\x01\x2a" and len(header) >= 30:
+                    width, height = struct.unpack("<HH", header[26:30])
+                    return width & 0x3fff, height & 0x3fff
+            if header[:2] == b"\xff\xd8":
+                stream.seek(2)
+                rotated = False
+                dimensions = None
+                while stream.tell() < MAX_IMAGE:
+                    prefix = stream.read(1)
+                    if prefix != b"\xff":
+                        break
+                    marker = stream.read(1)
+                    while marker == b"\xff":
+                        marker = stream.read(1)
+                    if not marker or marker in (b"\xda", b"\xd9"):
+                        break
+                    size = stream.read(2)
+                    if len(size) != 2:
+                        break
+                    size = int.from_bytes(size, "big") - 2
+                    if size < 0:
+                        break
+                    data = stream.read(size)
+                    if len(data) != size:
+                        break
+                    if marker == b"\xe1" and data.startswith(b"Exif\0\0"):
+                        tiff = data[6:]
+                        order = "little" if tiff[:2] == b"II" else "big" if tiff[:2] == b"MM" else None
+                        if order and len(tiff) >= 8:
+                            offset = int.from_bytes(tiff[4:8], order)
+                            count = int.from_bytes(tiff[offset:offset + 2], order)
+                            for index in range(min(count, 4096)):
+                                entry = tiff[offset + 2 + 12 * index:offset + 14 + 12 * index]
+                                if len(entry) != 12:
+                                    break
+                                if (int.from_bytes(entry[:2], order) == 274 and int.from_bytes(entry[2:4], order) == 3
+                                        and int.from_bytes(entry[4:8], order) == 1):
+                                    rotated = int.from_bytes(entry[8:10], order) in (5, 6, 7, 8)
+                    if marker[0] in (0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf) and len(data) >= 5:
+                        height, width = struct.unpack(">HH", data[1:5])
+                        dimensions = (width, height)
+                if dimensions:
+                    return dimensions[::-1] if rotated else dimensions
+        return None
+
+    def set_web_image_layout(self, image):
+        width = max(1, round(min(image["pixel_width"], 720, image.get("display_width", 720))))
+        image.update({"width": width, "height": max(1, round(image["pixel_height"] * width / image["pixel_width"]))})
+        image.pop("scale", None)
+
+    def restore_legacy_image_dimensions(self, operation, journal, plan):
+        if plan["source"] != WEB_ROOT:
+            return
+        changed = False
+        for image in plan["images"]:
+            # Never change a committed or uncertain legacy replacement request.
+            if image.get("bound") or image.get("bind_client_token") or image.get("pixel_width"):
+                continue
+            path = self.image_path(operation, image["block_id"])
+            with path.open("rb") as stream:
+                if digest(stream) != image.get("sha256"):
+                    self.fail("旧任务图片在暂存后发生变化，不能据此恢复尺寸。", "IMAGE_CONFLICT")
+            dimensions = self.staged_pixel_size(path)
+            if not dimensions or any(type(value) is not int or not 1 <= value <= 100000 for value in dimensions):
+                self.fail("旧任务图片缺少可核实的像素尺寸，请保留任务并重新读取原图。", "IMAGE_DIMENSIONS_REQUIRED")
+            image.update(zip(("pixel_width", "pixel_height"), dimensions))
+            self.set_web_image_layout(image)
+            changed = True
+        if changed:
+            self.save(operation, journal, plan)
+
     def stage_image(self, params):
         operation = self.identifier(params.get("operation_id"), True)
         block_id = self.identifier(params.get("block_id"))
@@ -719,6 +830,16 @@ class ContentImporter:
         image = next((item for item in plan["images"] if item["block_id"] == block_id), None)
         if image is None:
             self.fail("图片不属于本次读取的文档。", "IMAGE_FORBIDDEN")
+        pixel_keys = ("pixel_width", "pixel_height")
+        supplied_pixels = any(key in params for key in pixel_keys)
+        # An already-running extension worker can still use the old protocol.
+        # Both fields absent is compatible; one absent is malformed, never a
+        # reason to silently discard the other field or an earlier measurement.
+        if supplied_pixels:
+            if any(type(params.get(key)) is not int or not 1 <= params[key] <= 100000 for key in pixel_keys):
+                self.fail("图片像素宽高必须成对提供且为有效正整数。", "INVALID_PARAMS")
+            if any(key in image and image[key] != params[key] for key in pixel_keys):
+                self.fail("图片像素尺寸与此前分块不一致。", "IMAGE_CONFLICT")
         offset, total = params.get("offset"), params.get("total_size")
         mime, encoded = params.get("mime_type"), params.get("data_base64")
         if type(offset) is not int or type(total) is not int or not 0 <= offset < total <= MAX_IMAGE or mime not in MIMES:
@@ -737,27 +858,46 @@ class ContentImporter:
         present = path.stat().st_size if path.exists() else 0
         if offset > present:
             self.fail("图片分块不连续，请从已保存位置继续。", "IMAGE_OFFSET")
+        remaining = data
         if offset < present:
+            overlap = min(len(data), present - offset)
             with path.open("rb") as stream:
                 stream.seek(offset)
-                if stream.read(len(data)) != data:
+                if stream.read(overlap) != data[:overlap]:
                     self.fail("重复图片分块与已保存数据不一致。", "IMAGE_CONFLICT")
-        else:
+            # A resumed extension may use larger transport chunks. Verify the
+            # existing prefix, then append only genuinely new bytes.
+            remaining = data[overlap:]
+        if remaining:
             if image.get("staged"):
                 self.fail("图片已暂存完成，不能追加内容。", "IMAGE_CONFLICT")
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "ab") as stream:
-                stream.write(data)
+                stream.write(remaining)
                 stream.flush()
                 os.fsync(stream.fileno())
-            present += len(data)
+            present += len(remaining)
         image.update({"total_size": total, "mime_type": mime})
+        if supplied_pixels:
+            image.update({key: params[key] for key in pixel_keys})
         if present == total:
             with path.open("rb") as stream:
                 if not self.image_signature(stream.read(16), mime):
                     self.fail("下载结果不是所声明的图片，未创建文档。", "IMAGE_INVALID")
                 stream.seek(0)
-                image["sha256"] = digest(stream)
+                actual_digest = digest(stream)
+                if image.get("sha256") and image["sha256"] != actual_digest:
+                    self.fail("完整暂存图片与此前校验记录不一致。", "IMAGE_CONFLICT")
+                image["sha256"] = actual_digest
+            if plan["source"] == WEB_ROOT and not image.get("bound") and not image.get("bind_client_token"):
+                if not image.get("pixel_width") or not image.get("pixel_height"):
+                    dimensions = self.staged_pixel_size(path)
+                    if not dimensions or any(type(value) is not int or not 1 <= value <= 100000 for value in dimensions):
+                        self.fail("图片缺少可核实的像素尺寸，请保留任务并重新读取原图。", "IMAGE_DIMENSIONS_REQUIRED")
+                    if any(key in image and image[key] != value for key, value in zip(pixel_keys, dimensions)):
+                        self.fail("图片文件像素与此前分块不一致。", "IMAGE_CONFLICT")
+                    image.update(zip(pixel_keys, dimensions))
+                self.set_web_image_layout(image)
             image["staged"] = True
         self.save(operation, journal, plan)
         return {"next_offset": offset + len(data), "complete": image.get("staged") is True}
@@ -878,6 +1018,7 @@ class ContentImporter:
             return self.result(record, plan)
         if any(not image.get("staged") for image in plan["images"]):
             self.fail("请先完整下载并暂存全部图片，再创建文档。", "IMAGES_NOT_READY")
+        self.restore_legacy_image_dimensions(operation, journal, plan)
         if not record.get("copied_token"):
             if record.get("stage") in ("content_create_pending", "content_create_uncertain", "content_recovering"):
                 return self.recover_creation(operation, journal, record, plan)
@@ -945,7 +1086,7 @@ class ContentImporter:
             self.save(operation, journal, plan)
             return self.result(record, plan)
         for image in plan["images"]:
-            if image.get("bound"):
+            if image.get("bound") or image.get("uploaded_token"):
                 continue
             block_id = self.identifier(plan["bindings"].get(image["block_id"]))
             record["stage"] = "content_images"
@@ -988,17 +1129,7 @@ class ContentImporter:
                 image["upload_pending"] = False
                 self.save(operation, journal, plan)
                 return self.result(record, plan)
-            image.setdefault("bind_client_token", str(uuid.uuid4()))
-            self.save(operation, journal, plan)
-            replace = {"token": image["uploaded_token"]}
-            for key in ("width", "height", "align", "caption", "scale"):
-                if key in image:
-                    replace[key] = image[key]
-            self.host.api("PATCH", "/open-apis/docx/v1/documents/" + token + "/blocks/batch_update",
-                          {"client_token": image["bind_client_token"]},
-                          {"requests": [{"block_id": block_id, "replace_image": replace}]})
-            image["bound"] = True
-            self.save(operation, journal, plan)
+        if self.bind_images(operation, journal, record, plan, token):
             return self.result(record, plan)
         if "link_batches" not in plan:
             requests = []
@@ -1069,6 +1200,46 @@ class ContentImporter:
             record.update({"content_verified": True, "stage": "content_ready"})
         self.save(operation, journal, plan)
         return self.result(record, plan)
+
+    def bind_images(self, operation, journal, record, plan, token):
+        """Bind at most 20 media resources with one durable, replayable request."""
+        def request_for(image):
+            return {"block_id": self.identifier(plan["bindings"].get(image["block_id"])),
+                    "replace_image": {"token": image["uploaded_token"], **{
+                        key: image[key] for key in ("width", "height", "align", "caption", "scale") if key in image}}}
+
+        # A previous helper may have committed a singleton PATCH but lost its
+        # response. Reuse its original UUID/body before forming any new batch.
+        legacy = next((image for image in plan["images"] if image.get("bind_client_token") and not image.get("bound")), None)
+        if legacy:
+            record["stage"] = "content_images"
+            self.save(operation, journal, plan)
+            self.host.api("PATCH", "/open-apis/docx/v1/documents/" + token + "/blocks/batch_update",
+                          {"client_token": legacy["bind_client_token"]}, {"requests": [request_for(legacy)]})
+            legacy["bound"] = True
+            self.save(operation, journal, plan)
+            return True
+        if "image_bind_batches" not in plan:
+            waiting = [image for image in plan["images"] if not image.get("bound")]
+            plan["image_bind_batches"] = [{"client_token": str(uuid.uuid4()),
+                                           "image_ids": [image["block_id"] for image in waiting[start:start + 20]],
+                                           "requests": [request_for(image) for image in waiting[start:start + 20]]}
+                                          for start in range(0, len(waiting), 20)]
+            self.save(operation, journal, plan)
+        batch = next((batch for batch in plan["image_bind_batches"] if not batch.get("complete")), None)
+        if batch is None:
+            return False
+        record["stage"] = "content_images"
+        self.save(operation, journal, plan)
+        self.host.api("PATCH", "/open-apis/docx/v1/documents/" + token + "/blocks/batch_update",
+                      {"client_token": batch["client_token"]}, {"requests": batch["requests"]})
+        bound_ids = set(batch["image_ids"])
+        for image in plan["images"]:
+            if image["block_id"] in bound_ids:
+                image["bound"] = True
+        batch["complete"] = True
+        self.save(operation, journal, plan)
+        return True
 
     def append_bookmark(self, operation, journal, record, plan, batch, token):
         """Append a native bookmark, then locate and read it back before advancing.

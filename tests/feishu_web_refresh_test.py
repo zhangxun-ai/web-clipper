@@ -146,7 +146,7 @@ class WebRefreshTests(unittest.TestCase):
                 self.operation = "staged-image-operation-" + str(index)
                 self.prepare()
                 result = self.call("stage_image", block_id="Image", offset=0, total_size=len(data),
-                    mime_type="image/png", data_base64=base64.b64encode(data[:size]).decode())
+                    mime_type="image/png", data_base64=base64.b64encode(data[:size]).decode(), pixel_width=100, pixel_height=50)
                 self.assertTrue(result["ok"], result)
                 original = self.plan_bytes()
                 summary = self.call("prepare_web_content", source_url=self.source_url)

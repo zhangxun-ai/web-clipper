@@ -4,7 +4,7 @@
   "scripts": {
     "test": "node --test tests/*.test.cjs",
     "test:browser": "node tests/browser/feishu-extension.cjs && node tests/browser/feishu-recovery.cjs && npm run test:ui",
-    "test:ui": "node tests/browser/popup-ui.cjs && node tests/browser/connector-onboarding.cjs"
+    "test:ui": "node tests/browser/popup-ui.cjs && node tests/browser/connector-onboarding.cjs && node tests/browser/feishu-progress.cjs && node tests/browser/feishu-layout.cjs && node tests/browser/feishu-fidelity.cjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"

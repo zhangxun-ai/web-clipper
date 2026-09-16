@@ -43,6 +43,45 @@ function reachable(snapshot) {
   for (const block of snapshot.blocks) assert.equal(Object.hasOwn(block, "parent_id"), false);
 }
 
+test("SCYS bullet-dot markers become native lists without bypassing prose or image coverage", () => {
+  const bullet = (...parts) => el("div", { class: "bullet_container" },
+    el("div", { class: "bullet" }, el("div", { class: "bullet-dot" }, ...parts)),
+    el("div", { class: "list" }, "正文", el("strong", {}, "重点"), el("img", { src: "/body.png" })));
+  const result = capture(bullet("•"));
+  assert.deepEqual(content(result), ["正文重点"]);
+  assert.equal(result.blocks[1].block_type, 12);
+  assert.equal(result.images.length, 1);
+  reachable(result);
+  for (const parts of [["•真实说明"], ["•", el("img", { src: "/extra.png" })]]) {
+    assert.throws(() => capture(bullet(...parts)), { code: "CONTENT_MISMATCH" });
+  }
+  assert.throws(() => fromRoot(bullet("•"), { title: "其他网站", sourceUrl: "https://example.com/article" }), { code: "CONTENT_MISMATCH" });
+  const inside = capture(el("div", { class: "bullet_container" }, el("div", { class: "list" },
+    el("div", { class: "bullet" }, el("div", { class: "bullet-dot" }, "•")), "正文")));
+  assert(content(inside).join("").includes("•"), "a glyph inside list content must still be consumed as content");
+});
+
+test("SCYS callouts retain their icon, colors and grouped content without an extra emoji paragraph", () => {
+  const callout = (emoji, ...body) => el("div", { class: "callout border_color_2 background_color_2" },
+    el("div", { class: "block-icon" }, el("div", { class: "callout-emoji-container" }, el("span", { class: "emoji-text" }, emoji))),
+    el("div", {}, ...body));
+  const result = capture(el("p", {}, "前文"), callout("💡", el("p", {}, "提示首段"),
+    el("p", {}, "提示末段", el("strong", {}, "重点")), el("img", { src: "/figure.png" })), el("p", {}, "后文"));
+  const box = result.blocks.find(block => block.block_type === 19);
+  assert.deepEqual(box.callout, { emoji_id: "bulb", background_color: 2, border_color: 2 });
+  assert.deepEqual(content(result), ["前文", "提示首段", "提示末段重点", "后文"]);
+  assert.equal(box.children.length, 3);
+  assert.equal(result.images.length, 1);
+  assert.equal(result.blocks[0].children.length, 3);
+  reachable(result);
+  const unknown = capture(callout("🧬", el("p", {}, "未知图标的原文")));
+  assert.equal(unknown.blocks[1].block_type, 34);
+  assert.deepEqual(content(unknown), ["🧬", "未知图标的原文"]);
+  reachable(unknown);
+  const extra = capture(callout("💡不能丢弃", el("p", {}, "正文")));
+  assert(content(extra).includes("💡不能丢弃"));
+});
+
 test("preserves original prose, heading levels and text order without duplicating wrappers", () => {
   const result = capture(el("div", {}, el("section", {}, el("h1", {}, "主标题"), el("h6", {}, "六级标题"), el("p", {}, "英文 hello ", el("span", {}, "world"), "，中文原样。"))), el("p", {}, "下一段"));
   assert.equal(result.title, "原文标题");
@@ -185,10 +224,36 @@ test("file cards preserve extra body images, audio, video and additional filenam
   }
 });
 
-test("keeps meaningful empty paragraphs and does not invent whitespace-only wrapper blocks", () => {
+test("removes prose spacers while retaining the required empty quote paragraph", () => {
   const result = capture("\n  ", el("div", {}, " \n "), el("p", {}), el("blockquote", {}), el("p", {}, el("br", {})));
-  assert.equal(result.blocks.filter((block) => block.block_type === 2).length, 3);
+  assert.equal(result.blocks.filter((block) => block.block_type === 2).length, 1);
+  assert.equal(text(result.blocks.find(block => block.block_type === 2)), "");
   reachable(result);
+});
+
+test("preserves multiple explicit breaks, nonbreaking spaces and authored preformatted spacers", () => {
+  const result = capture(el("p", {}, "第一行", el("br", {}), el("br", {}), "下一行"),
+    el("p", {}, el("br", {}), el("br", {})), el("p", {}, "\u00a0"),
+    el("div", { style: "white-space:pre-wrap" }, el("p", {}, el("br", {}))));
+  assert.deepEqual(result.blocks.slice(1).map(text), ["第一行\n\n下一行", "\n\n", "\u00a0", ""]);
+  reachable(result);
+});
+
+test("maps author colors and text alignment into Feishu semantic styles", () => {
+  const result = capture(el("h2", { style: "text-align:center;color:rgb(230, 115, 0)" }, "橙色标题"),
+    el("p", { style: "text-align:right" }, el("span", { style: "color:#ff0000" }, "红色"),
+      el("span", { style: "background-color:yellow" }, "高亮")));
+  assert.equal(result.blocks[1].heading2.style.align, 2);
+  assert.equal(result.blocks[1].heading2.elements[0].text_run.text_element_style.text_color, 2);
+  assert.equal(result.blocks[2].text.style.align, 3);
+  assert.equal(result.blocks[2].text.elements[0].text_run.text_element_style.text_color, 1);
+  assert.equal(result.blocks[2].text.elements[1].text_run.text_element_style.background_color, 3);
+});
+
+test("source coverage refuses text lost outside recognized table cells or list bodies", () => {
+  assert.throws(() => capture(el("table", {}, el("tr", {}, el("td", {}, "单元格")), el("tfoot", {}, "不得遗漏的表格注释"))), { code: "CONTENT_MISMATCH" });
+  assert.throws(() => capture(el("div", { class: "bullet_container" }, el("div", { class: "list" }, "列表正文"), el("p", {}, "不得遗漏的补充说明"))), { code: "CONTENT_MISMATCH" });
+  assert.throws(() => capture(el("table", {}, el("tr", {}, el("td", {}, "单元格")), el("img", { src: "/footnote.png" }))), { code: "CONTENT_MISMATCH" });
 });
 
 test("skips non-body controls, scripts and hidden decorative resources", () => {

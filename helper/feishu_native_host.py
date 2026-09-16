@@ -274,7 +274,7 @@ class NativeHost:
         "prepare_web_content": ("operation_id", "source_url", "snapshot"),
         "refresh_web_content": ("operation_id", "source_url", "snapshot", "request_id"),
         "retry_content_creation": ("operation_id", "request_id"),
-        "stage_image": ("operation_id", "block_id", "offset", "total_size", "mime_type", "data_base64"),
+        "stage_image": ("operation_id", "block_id", "offset", "total_size", "mime_type", "data_base64", "pixel_width", "pixel_height"),
         "import_step": ("operation_id",),
         "get_operation": ("operation_id",),
     }

@@ -52,6 +52,41 @@ test("a webpage snapshot is captured once, then rebuilt and verified under the c
   assert.equal(f.calls.some(c => ["prepare_content", "check_copy", "copy_doc"].includes(c.action)), false);
 });
 
+test("web image staging passes decoded pixels on every chunk despite missing or placeholder source dimensions", async () => {
+  const f = fixture(), originalCall = f.deps.call;
+  const bytes = Buffer.alloc(220001, 127);
+  f.deps.captureImage = async () => ({ mimeType: "image/png", size: bytes.length,
+    pixelWidth: 1280, pixelHeight: 661, contentBase64: bytes.toString("base64") });
+  f.deps.call = async (action, p) => {
+    if (action === "prepare_web_content") return { title: "网页原题", block_count: 2, image_count: 1,
+      images: [{ block_id: "Image", url: "https://example.com/image.png", width: 1, height: 1 }] };
+    if (action === "stage_image") {
+      f.calls.push({ action, params: p });
+      assert.equal(p.pixel_width, 1280); assert.equal(p.pixel_height, 661);
+      const next_offset = p.offset + Buffer.from(p.data_base64, "base64").length;
+      return { next_offset, complete: next_offset === p.total_size };
+    }
+    return originalCall(action, p);
+  };
+  await runContentJob(f.job, f.deps);
+  assert.equal(f.job.stage, "complete", f.job.error);
+  assert.equal(f.calls.filter(call => call.action === "stage_image").length, 2);
+});
+
+test("web image with absent or invalid decoded dimensions stops before staging and creation", async () => {
+  for (const pixels of [{}, { pixelWidth: 1280, pixelHeight: 0 }, { pixelWidth: NaN, pixelHeight: 20 },
+    { pixelWidth: 1.5, pixelHeight: 20 }, { pixelWidth: 100001, pixelHeight: 20 }]) {
+    const f = fixture(), call = f.deps.call;
+    f.deps.call = (action, params) => action === "prepare_web_content"
+      ? { title: "网页原题", block_count: 2, image_count: 1, images: [{ block_id: "Image" }] } : call(action, params);
+    f.deps.captureImage = async () => ({ mimeType: "image/png", size: 1, contentBase64: "YQ==", ...pixels });
+    await runContentJob(f.job, f.deps);
+    assert.equal(f.job.stage, "collecting");
+    assert.equal(f.job.errorCode, "IMAGE_INVALID");
+    assert.equal(f.calls.some(call => ["stage_image", "import_step", "move_doc"].includes(call.action)), false);
+  }
+});
+
 test("a safe legacy renderer correction refreshes the unstarted snapshot automatically under the same job", async () => {
   const f = fixture(), call = f.deps.call;
   Object.assign(f.job, { stage: "collecting", sourceToken: "WebRoot", error: "图片HTTP400" });

@@ -54,7 +54,7 @@ class WebImportTests(unittest.TestCase):
     def stage(self):
         data = b"\x89PNG\r\n\x1a\n" + b"test image bytes"
         return self.call("stage_image", block_id="Image", offset=0, total_size=len(data), mime_type="image/png",
-                         data_base64=base64.b64encode(data).decode())
+                         data_base64=base64.b64encode(data).decode(), pixel_width=100, pixel_height=50)
 
     def finish(self):
         for _ in range(20):
@@ -83,6 +83,20 @@ class WebImportTests(unittest.TestCase):
         self.assertTrue(all(argv[3].startswith("/open-apis/") for argv in self.cli.calls))
         self.assertTrue(all(argv[2] != "GET" or "/Created" in argv[3]
                             or argv[3] == "/open-apis/drive/v1/files" for argv in self.cli.calls))
+
+    def test_reading_styles_and_protected_empty_paragraph_survive_write_and_readback(self):
+        payload = self.source["blocks"][1]["text"]
+        payload["style"]["align"] = 2
+        payload["elements"][0]["text_run"]["text_element_style"].update({"text_color": 2, "background_color": 3})
+        self.source["blocks"][0]["children"].append("ProtectedBlank")
+        self.source["blocks"].append({"block_id": "ProtectedBlank", "block_type": 2,
+                                      "text": {"elements": [{"text_run": {"content": ""}}]}})
+        self.assertTrue(self.prepare()["ok"])
+        self.assertTrue(self.stage()["ok"])
+        result = self.finish()
+        self.assertTrue(result["complete"])
+        self.assertEqual(self.cli.target["NewText"]["text"], payload)
+        self.assertEqual(self.cli.target["NewProtectedBlank"]["text"]["elements"][0]["text_run"]["content"], "")
         self.assertNotIn(self.source["images"][0]["url"], json.dumps(self.cli.calls))
         journal = self.host.store.read("operations.json", {})
         self.assertIs(journal[self.operation]["content_verified"], True)

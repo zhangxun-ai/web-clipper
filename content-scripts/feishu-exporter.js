@@ -1,7 +1,7 @@
 (function () {
   // Dynamic injection can happen again when the user opens the save page.
   const previousCapture = globalThis.FeishuWebCapture;
-  if (previousCapture?.version === 3) return;
+  if (previousCapture?.version === 5) return;
   const MESSAGE_GET_PAGE_INFO = "feishu-export:get-page-info";
   const MESSAGE_EXPORT_DOCUMENT = "feishu-export:export-document";
   const MESSAGE_GET_SCYS_COURSE_OUTLINE = "feishu-export:get-scys-course-outline";
@@ -204,7 +204,7 @@
     return true;
   });
 
-  globalThis.FeishuWebCapture = { version: 3, snapshot: captureWebSnapshot };
+  globalThis.FeishuWebCapture = { version: 5, snapshot: captureWebSnapshot };
 
   async function captureWebSnapshot() {
     if (!globalThis.WebFeishuBlocks?.fromRoot) throw new Error("网页剪存组件未加载，请刷新扩展和原网页后重试。");
@@ -233,12 +233,21 @@
     while (Date.now() <= deadline) {
       if (location.href !== sourceUrl) throw Object.assign(new Error("原网页已切换，请从要保存的文章重新打开插件。"), { code: "SOURCE_CHANGED" });
       const root = isWechatArticlePage() ? document.querySelector("#js_content") : isScysArticle
-        ? document.querySelector("main .feishu-doc-content") || document.querySelector("main .content-container")
+        ? getScysCaptureRoot()
         : getGenericExportRoot();
       const content = String(root?.textContent || "").trim();
-      const loading = !content || /^(?:正在加载|加载中|请稍候|请先登录|登录后查看)/.test(content)
-        || Boolean(root?.matches?.('[aria-busy="true"], [role="progressbar"]'))
-        || Boolean(root?.querySelector('[aria-busy="true"], [role="progressbar"]'));
+      // A ready introduction must not hide a still-loading embedded document.
+      const regions = root ? [root, ...(isScysArticle
+        ? root.querySelectorAll(".post-content, .feishu-doc-content") : [])] : [];
+      const busySelector = '[aria-busy="true"], [role="progressbar"]';
+      const loading = !root || !isCaptureNodeVisible(root) || regions.some(region => {
+        if (!isCaptureNodeVisible(region)) return false;
+        const text = String(region.textContent || "").trim();
+        const optionalIntro = isScysArticle && region !== root && region.matches(".post-content");
+        return (!text && !optionalIntro) || /^(?:正在加载|加载中|请稍候|请先登录|登录后查看)/.test(text)
+          || region.matches(busySelector)
+          || Array.from(region.querySelectorAll(busySelector)).some(isCaptureNodeVisible);
+      });
       if (root && !loading) {
         const images = Array.from(root.querySelectorAll("img")).map(node => node.getAttribute("data-src") || node.currentSrc || node.getAttribute("src") || "").join("\n");
         const signature = content + "\u0000" + images;
@@ -251,17 +260,49 @@
     throw Object.assign(new Error("文章正文尚未加载完成，请在原网页确认能看到完整内容，再继续当前任务。"), { code: "PAGE_NOT_READY" });
   }
 
+  function isCaptureNodeVisible(node) {
+    const view = node.ownerDocument?.defaultView;
+    if (["hidden", "collapse"].includes(view?.getComputedStyle(node).visibility)) return false;
+    // display:none is not inherited by computed styles. A hidden ancestor
+    // also excludes its descendants; display:contents alone does not.
+    for (let parent = node; parent; parent = parent.parentElement) {
+      if (parent.hidden || view?.getComputedStyle(parent).display === "none") return false;
+    }
+    return true;
+  }
+
+  function getScysCaptureRoot() {
+    // A SCYS post can contain an introduction AND one or more embedded docs.
+    // Select the article boundary first, then check that every known content
+    // region is inside it. Checking only a selected inner doc misses siblings.
+    const regions = Array.from(document.querySelectorAll("main .post-content, main .feishu-doc-content"));
+    const visibleRegions = regions.filter(isCaptureNodeVisible);
+    const root = document.querySelector("main .content-container") || (visibleRegions.length === 1 ? visibleRegions[0] : null);
+    if (visibleRegions.some(node => (String(node.textContent || "").trim() || node.querySelector("img")) && !root?.contains(node))) {
+      throw Object.assign(new Error("发现正文区域未被完整选取，已停止保存，避免遗漏文章内容。"), { code: "PAGE_CAPTURE_FAILED" });
+    }
+    return root;
+  }
+
   function cloneWebCaptureRoot(liveRoot) {
     const originals = [liveRoot, ...liveRoot.querySelectorAll("*")];
     if (originals.length > 100000) throw new Error("网页正文结构过大，请缩小保存范围。");
     const clone = liveRoot.cloneNode(true);
     const copies = [clone, ...clone.querySelectorAll("*")];
+    const cloneMap = new Map(originals.map((original, index) => [original, copies[index]]));
     // Preserve visible inline emphasis before detaching the article from its CSS.
     originals.forEach((original, index) => {
       const copy = copies[index];
       const style = original.ownerDocument?.defaultView?.getComputedStyle(original);
+      copy.__feishuAuthoredWhitespace = original.style?.whiteSpace || "";
       if (style && copy.style) {
-        for (const key of ["fontWeight", "fontStyle", "textDecorationLine", "whiteSpace"]) {
+        // A local preformatted region can be styled by a stylesheet. Record
+        // that boundary, without treating root-wide Quill pre-wrap as poetry.
+        const parentStyle = cloneMap.get(original.parentElement)?.style;
+        if (/^(pre|pre-wrap|pre-line|break-spaces)$/.test(style.whiteSpace)
+          && (original === liveRoot ? !original.classList.contains("ql-editor")
+            : parentStyle && parentStyle.whiteSpace !== style.whiteSpace)) copy.__feishuAuthoredWhitespace = style.whiteSpace;
+        for (const key of ["fontWeight", "fontStyle", "textDecorationLine", "whiteSpace", "color", "backgroundColor", "textAlign"]) {
           if (style[key]) copy.style[key] = style[key];
         }
         if (style.display === "none" || style.visibility === "hidden") copy.hidden = true;
@@ -269,8 +310,21 @@
       if (original.tagName?.toLowerCase() === "img") {
         const url = original.getAttribute("data-original") || original.getAttribute("data-actualsrc") || original.getAttribute("data-src") || original.currentSrc || original.getAttribute("src");
         if (url) copy.setAttribute("src", url);
-        if (original.naturalWidth) copy.setAttribute("width", original.naturalWidth);
-        if (original.naturalHeight) copy.setAttribute("height", original.naturalHeight);
+        // Display intent is independent of the loaded resource's pixel size.
+        // Never use a lazy placeholder's rectangle/height as the final layout.
+        const px = value => /^\d+(?:\.\d+)?(?:px)?$/.test(String(value || "").trim()) ? Number.parseFloat(value) : 0;
+        let sameResource = false;
+        try { sameResource = new URL(url, original.baseURI).href === new URL(original.currentSrc || original.getAttribute("src"), original.baseURI).href; } catch (_) {}
+        const widths = [px(original.style?.width), px(original.style?.maxWidth),
+          sameResource ? px(original.getAttribute("width")) : 0];
+        if (original.parentElement?.classList.contains("s-image")) widths.push(px(original.parentElement.style.maxWidth));
+        const authoredWidths = widths.filter(value => value > 0 && value <= 100000);
+        if (authoredWidths.length) copy.__feishuDisplayWidth = Math.min(...authoredWidths);
+        copy.removeAttribute("width"); copy.removeAttribute("height");
+        if (sameResource && original.naturalWidth && original.naturalHeight) {
+          copy.setAttribute("width", original.naturalWidth);
+          copy.setAttribute("height", original.naturalHeight);
+        }
       }
       // cloneNode drops currentSrc. Keep the resource selected by the browser
       // instead of choosing an unsupported first <source> from a media player.
@@ -4403,6 +4457,7 @@
         captureWebSnapshot,
         cloneWebCaptureRoot,
         waitForWebCaptureRoot,
+        getScysCaptureRoot,
         isGoogleDocsPage,
         getGoogleDocsMeta,
         buildGoogleDocsExportUrl,

@@ -262,12 +262,19 @@
             await persist({ activeStep: "capture_image" });
             const asset = await captureImage(job.source, entry, job.sourceTabId);
             if (!asset?.mimeType?.startsWith("image/") || !asset.contentBase64 || !asset.size) throw new Error("图片读取不完整，已停止；不会生成缺图文档。");
+            const pixels = {};
+            if (job.source.type === "web") {
+              if (![asset.pixelWidth, asset.pixelHeight].every(value => Number.isInteger(value) && value > 0 && value <= 100000)) {
+                throw Object.assign(new Error("未取得图片的实际尺寸，已停止保存，避免生成过小或变形的图片。"), { code: "IMAGE_INVALID" });
+              }
+              pixels.pixel_width = asset.pixelWidth; pixels.pixel_height = asset.pixelHeight;
+            }
             const encodedChunkSize = 256 * 1024;
             let offset = 0;
             for (let encoded = 0; encoded < asset.contentBase64.length; encoded += encodedChunkSize) {
               const data = asset.contentBase64.slice(encoded, encoded + encodedChunkSize);
               const response = await call("stage_image", { operation_id: job.id, block_id: entry.block_id,
-                offset, total_size: asset.size, mime_type: asset.mimeType, data_base64: data });
+                offset, total_size: asset.size, mime_type: asset.mimeType, data_base64: data, ...pixels });
               const expected = offset + data.length * 3 / 4 - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
               if (response.next_offset !== expected) throw new Error("图片传输进度不一致，请继续当前任务重新核对。");
               offset = response.next_offset;
