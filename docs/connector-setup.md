@@ -40,23 +40,25 @@ npm install --prefix "$HOME/Library/Application Support/FeishuClipper/tools" @la
 
 ### 2. 下载经过校验的连接器
 
-固定源码提交：`d3246b525c36c038e380d983c628bbdbafd1d991`。这是已发布且与当前上手页面兼容的连接器，不需要跟随页面文案版本重新安装。
+固定源码提交：`841ff6986cecfad4e118b2f67b2c9126251e365a`。此版本支持在新保存的文章中加入原文入口；使用旧固定源码安装的连接器需更新到此版本。连接器直接指向当前仓库源码的本机安装无需重新注册。
+
+2026-09-16 同步验证：243 项 JavaScript、168 项 Python 回归及完整 `npm run test:browser` 通过；安装向导和手动说明的三个文件 SHA-256 与上述固定提交一致。自动测试模拟飞书响应，不将其作为真实远程写入验收。
 
 下载地址前缀：
 
 ```text
-https://raw.githubusercontent.com/zhangxun-ai/web-clipper/d3246b525c36c038e380d983c628bbdbafd1d991/helper/
+https://raw.githubusercontent.com/zhangxun-ai/web-clipper/841ff6986cecfad4e118b2f67b2c9126251e365a/helper/
 ```
 
 只下载以下三个文件，并逐个核对 SHA-256：
 
 | 文件 | SHA-256 |
 | --- | --- |
-| `feishu_native_host.py` | `426bff03a68a30a3fe093ff994f0283e92bbeba49fec1aa859b0e2968eb621c6` |
-| `feishu_content_import.py` | `e4d6ec5ba812b5a7f782e71097e2b029cc89a2f68aa516dc4f5ea5f0a7a484ea` |
+| `feishu_native_host.py` | `cb9bb7c50e08911cff39fe57adf343551e8e55921ebb3534d25fbb5194a94ece` |
+| `feishu_content_import.py` | `b6fc7af791996bda19a53209b820d3782a2f6d352119e05aca7945e3e41e6f56` |
 | `install_feishu_native_host.py` | `10c0b28107df65125b924fd5a1d075e1e375adc84dbc8634a835fb4915c6aef3` |
 
-持久保存到 `~/Library/Application Support/FeishuClipper/source/d3246b525c36c038e380d983c628bbdbafd1d991/helper/`。下载先写本次临时文件，校验通过才进入持久目录；已存在的文件先核对，不能覆盖未知内容。下载或校验失败时明确停止，不能改用未校验的 main 分支。
+持久保存到 `~/Library/Application Support/FeishuClipper/source/841ff6986cecfad4e118b2f67b2c9126251e365a/helper/`。下载先写本次临时文件，校验通过才进入持久目录；已存在的文件先核对，不能覆盖未知内容。下载或校验失败时明确停止，不能改用未校验的 main 分支。
 
 此目录是连接器的运行依赖，不是临时下载目录；安装后不能删除或随意改名。这个位置与用户的 GitHub 克隆目录、浏览器商店安装目录无关。
 

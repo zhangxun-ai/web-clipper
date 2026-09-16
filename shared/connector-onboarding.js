@@ -1,10 +1,10 @@
 (function (scope) {
   "use strict";
 
-  const sourceRevision = "d3246b525c36c038e380d983c628bbdbafd1d991";
+  const sourceRevision = "841ff6986cecfad4e118b2f67b2c9126251e365a";
   const FILES = Object.freeze({
-    "feishu_native_host.py": "426bff03a68a30a3fe093ff994f0283e92bbeba49fec1aa859b0e2968eb621c6",
-    "feishu_content_import.py": "e4d6ec5ba812b5a7f782e71097e2b029cc89a2f68aa516dc4f5ea5f0a7a484ea",
+    "feishu_native_host.py": "cb9bb7c50e08911cff39fe57adf343551e8e55921ebb3534d25fbb5194a94ece",
+    "feishu_content_import.py": "b6fc7af791996bda19a53209b820d3782a2f6d352119e05aca7945e3e41e6f56",
     "install_feishu_native_host.py": "10c0b28107df65125b924fd5a1d075e1e375adc84dbc8634a835fb4915c6aef3"
   });
 
