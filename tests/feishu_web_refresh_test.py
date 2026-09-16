@@ -96,9 +96,13 @@ class WebRefreshTests(unittest.TestCase):
         self.assertFalse(result["data"]["already_applied"])
         self.assertFalse(result["data"].get("refresh_required"))
         self.assertEqual(result["data"]["image_count"], 0)
-        self.assertEqual(result["data"]["block_count"], 2)
+        self.assertEqual(result["data"]["block_count"], 3)
         self.assertEqual(self.cli.calls, [])
         _, record, plan = self.host.content.read(self.operation)
+        origin = fixtures.fixtures.assert_origin_paragraph(self, plan, self.source_url)
+        self.assertEqual(plan["roots"], [origin, "Text"])
+        self.assertEqual(set(plan["blocks"]), {origin, "Text"})
+        self.assertEqual(plan["blocks"]["Text"]["text"], self.corrected()["blocks"][1]["text"])
         self.assertEqual(record["error_history"], [{"code": "IMAGE_HTTP_400"}])
         self.assertEqual(record["create_attempt_history"], [{"stage": "older_attempt"}])
         backup = record["snapshot_refresh_history"][0]["backup_name"]
@@ -109,6 +113,9 @@ class WebRefreshTests(unittest.TestCase):
             if result["data"]["complete"]:
                 break
         self.assertTrue(result["data"]["complete"])
+        _, _, imported = self.host.content.read(self.operation)
+        saved_origin = fixtures.fixtures.assert_origin_paragraph(self, imported, self.source_url, self.cli.target)
+        self.assertEqual(self.cli.target["Created"]["children"], [saved_origin, "NewText"])
         completed = self.plan_bytes()
         calls = len(self.cli.calls)
         result = self.refresh(snapshot={"invalid": "an old repeated message cannot overwrite progress"})

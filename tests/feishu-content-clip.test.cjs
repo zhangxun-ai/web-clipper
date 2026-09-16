@@ -34,11 +34,25 @@ test("new tasks rebuild content without checking or requesting source copy permi
   assert.equal(f.job.stage, "complete", f.job.error);
   assert.equal(f.job.resultUrl, "https://my.feishu.cn/wiki/Saved");
   assert.equal(f.calls.some(c => ["copy_doc", "check_copy"].includes(c.action)), false);
+  assert(f.calls.filter(c => c.action === "prepare_content").every(c => c.p.origin_url === "https://my.feishu.cn/docx/Source"));
   const chunks = f.calls.filter(c => c.action === "stage_image");
   assert.equal(chunks.length, 2);
   assert.equal(chunks[1].p.offset, 196608);
   assert.ok(f.calls.findIndex(c => c.action === "import_step") > f.calls.findLastIndex(c => c.action === "stage_image"));
   assert.ok(f.states.some(s => s.copy?.token === "Created" && s.stage === "importing"));
+});
+
+test("wiki sources retain their original entry URL while reading the resolved document", async () => {
+  const f = fixture();
+  f.job.source = { type: "wiki", token: "OriginalWiki", url: "https://my.feishu.cn/wiki/OriginalWiki" };
+  const original = f.deps.call;
+  f.deps.call = async (action, p) => action === "get_node" && p.token === "OriginalWiki"
+    ? { node: { obj_type: "docx", obj_token: "Source" } } : original(action, p);
+  await runContentJob(f.job, f.deps);
+  assert.equal(f.job.stage, "complete", f.job.error);
+  const prepare = f.calls.filter(c => c.action === "prepare_content");
+  assert.equal(prepare.length, 2);
+  assert(prepare.every(c => c.p.token === "Source" && c.p.origin_url === f.job.source.url));
 });
 
 test("a failed image download never starts document creation", async () => {

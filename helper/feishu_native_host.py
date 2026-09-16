@@ -270,7 +270,7 @@ class NativeHost:
         "check_copy": ("token",), "copy_doc": ("token", "name", "operation_id"),
         "move_doc": ("space_id", "parent_node_token", "obj_token", "operation_id"),
         "get_task": ("task_id",),
-        "prepare_content": ("token", "operation_id"),
+        "prepare_content": ("token", "operation_id", "origin_url"),
         "prepare_web_content": ("operation_id", "source_url", "snapshot"),
         "refresh_web_content": ("operation_id", "source_url", "snapshot", "request_id"),
         "retry_content_creation": ("operation_id", "request_id"),

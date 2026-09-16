@@ -70,7 +70,11 @@ def rewrite_internal_url(value, source, mapping, destination):
         return value
 
 
-def rewritten_elements(block, source, mapping, destination):
+def rewritten_elements(block, source, mapping, destination, origin_block_id=None):
+    # Attribution always points back to the source, even when it includes a
+    # known document-local anchor that ordinary body links should remap.
+    if block.get("block_id") == origin_block_id:
+        return None
     field = TEXT_FIELDS.get(block.get("block_type"))
     if field is None:
         return None
@@ -327,6 +331,30 @@ class ContentImporter:
             self.fail("源文档存在未读取完整的内容，未创建文档。", "INVALID_RESPONSE")
         return clean, roots, batches, images
 
+    def add_origin_link(self, plan, url):
+        """Add one verified attribution paragraph only while building a new plan."""
+        if plan.get("origin_link"):
+            return
+        url = self.web_url(url)
+        block_id = "ClipSource" + uuid.uuid4().hex
+        while block_id in plan["blocks"]:
+            block_id = "ClipSource" + uuid.uuid4().hex
+        block = {"block_id": block_id, "block_type": 2, "text": {
+            "elements": [
+                {"text_run": {"content": "原文出处：" + urlsplit(url).hostname + " · "}},
+                {"text_run": {"content": "查看原文", "text_element_style": {"link": {"url": url}}}}
+            ], "style": {"align": 1}}}
+        plan["blocks"][block_id] = block
+        plan["roots"] = [block_id, *plan["roots"]]
+        first = plan["batches"][0] if plan["batches"] else None
+        if first and "descendants" in first and len(first["descendants"]) < 200:
+            first["children_id"].insert(0, block_id)
+            first["descendants"].insert(0, block)
+        else:
+            plan["batches"].insert(0, {"children_id": [block_id], "descendants": [block],
+                                       "client_token": str(uuid.uuid4())})
+        plan["origin_link"] = {"url": url, "block_id": block_id}
+
     def prepare(self, params):
         source = self.identifier(params.get("token"))
         operation = self.identifier(params.get("operation_id"), True)
@@ -355,6 +383,7 @@ class ContentImporter:
                 "create_marker": CREATE_MARKER_PREFIX + str(uuid.uuid4()),
                 "blocks": clean, "roots": roots, "batches": batches, "images": images,
                 "batch_index": 0, "bindings": {}, "verified_blocks": [], "verify_page": "", "bookmarks": bookmarks}
+        self.add_origin_link(plan, params.get("origin_url", "https://www.feishu.cn/docx/" + source))
         # Keep room for the eventual verification copy inside the state-file limit.
         if len(json.dumps(plan, ensure_ascii=False).encode("utf-8")) > 5 * 1024 * 1024:
             self.fail("源文档内容超过本机快照大小限制，未创建文档。", "IMPORT_TOO_LARGE")
@@ -580,6 +609,7 @@ class ContentImporter:
                 "create_marker": CREATE_MARKER_PREFIX + str(uuid.uuid4()),
                 "blocks": clean, "roots": roots, "batches": batches, "images": images,
                 "batch_index": 0, "bindings": {}, "verified_blocks": [], "verify_page": "", "bookmarks": {}}
+        self.add_origin_link(plan, source_url)
         return plan
 
     def can_refresh_web(self, operation, record, plan):
@@ -1134,7 +1164,8 @@ class ContentImporter:
         if "link_batches" not in plan:
             requests = []
             for source_id, block in plan["blocks"].items():
-                elements = rewritten_elements(block, plan["source"], plan["bindings"], token)
+                elements = rewritten_elements(block, plan["source"], plan["bindings"], token,
+                                              plan.get("origin_link", {}).get("block_id"))
                 if elements is not None:
                     requests.append({"block_id": plan["bindings"][source_id],
                                      "update_text_elements": {"elements": elements}})
@@ -1304,7 +1335,8 @@ class ContentImporter:
             if original["block_type"] == 999 and not any(part.get("bookmark_verified") and part["children_id"] == [source_id] for part in plan["batches"]):
                 self.fail("链接卡片尚未核对，暂不迁入知识库。", "CONTENT_MISMATCH")
             wanted = copy.deepcopy(original)
-            elements = rewritten_elements(original, plan["source"], mapping, token)
+            elements = rewritten_elements(original, plan["source"], mapping, token,
+                                          plan.get("origin_link", {}).get("block_id"))
             if elements is not None:
                 wanted[TEXT_FIELDS[original["block_type"]]]["elements"] = elements
             wanted["block_id"] = mapping[source_id]

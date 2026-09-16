@@ -24,6 +24,27 @@ def text(block_id, content, **extra):
                 "style": {"align": 1, "background_color": "LightGrayBackground"}}, **extra}
 
 
+def assert_origin_paragraph(test_case, plan, expected_url, target=None):
+    """Validate the additional source paragraph, never discard it from checks."""
+    origin = plan["origin_link"]
+    test_case.assertEqual(origin["url"], expected_url)
+    block_id = origin["block_id"]
+    test_case.assertEqual(plan["roots"][0], block_id)
+    block = plan["blocks"][block_id]
+    test_case.assertEqual(block["block_type"], 2)
+    runs = [element["text_run"] for element in block["text"]["elements"]]
+    test_case.assertTrue("".join(run["content"] for run in runs).startswith("原文出处："))
+    test_case.assertEqual([(run["content"], run.get("text_element_style", {}).get("link", {}).get("url"))
+                          for run in runs if run.get("text_element_style", {}).get("link")],
+                         [("查看原文", expected_url)])
+    if target is None:
+        return block_id
+    destination = plan["bindings"][block_id]
+    test_case.assertEqual(target["Created"]["children"][0], destination)
+    test_case.assertEqual(target[destination]["text"], block["text"])
+    return destination
+
+
 class ImportCLI:
     def __init__(self):
         self.source = [
@@ -164,6 +185,26 @@ class ContentTests(unittest.TestCase):
         self.cli.source.append({"block_id": "Bookmark", "block_type": 999, "undefined": {}})
         self.cli.bookmarks["Bookmark"] = {"name": '标题 < & "原样"', "href": "https://example.com/article?a=1&b=2"}
 
+    def advance_until(self, predicate):
+        for _ in range(30):
+            _, _, plan = self.host.content.read(self.operation)
+            if predicate(plan):
+                return plan
+            result = self.step()
+            self.assertTrue(result["ok"], result)
+        self.fail("Import did not reach the expected persisted phase")
+
+    @staticmethod
+    def bookmark_batch(plan):
+        return next((index, batch) for index, batch in enumerate(plan["batches"])
+                    if batch.get("children_id") == ["Bookmark"] and "bookmark" in batch)
+
+    def assert_saved_roots(self, body_roots=("NewText", "NewTable", "NewImage")):
+        _, _, plan = self.host.content.read(self.operation)
+        origin = assert_origin_paragraph(self, plan, "https://www.feishu.cn/docx/Source", self.cli.target)
+        self.assertEqual(self.cli.target["Created"]["children"], [origin, *body_roots])
+        return plan
+
     def test_native_bookmark_recreated_in_original_position_and_read_back(self):
         for index in (0, 1, 3):
             with self.subTest(index=index):
@@ -178,12 +219,14 @@ class ContentTests(unittest.TestCase):
                 self.assertTrue(result["data"]["complete"])
                 _, _, plan = self.host.content.read(self.operation)
                 card_id = plan["bindings"]["Bookmark"]
-                self.assertEqual(self.cli.target["Created"]["children"][index], card_id)
+                self.assert_saved_roots([plan["bindings"][source_id] for source_id in self.cli.source[0]["children"]])
+                self.assertEqual(self.cli.target["Created"]["children"][index + 1], card_id)
                 self.assertEqual(self.cli.bookmarks[card_id], self.cli.bookmarks["Bookmark"])
                 self.assertTrue(any(c[1:3] == ["docs", "+fetch"] and card_id in c for c in self.cli.calls))
 
     def test_bookmark_timeout_after_commit_recovers_without_duplicate_append(self):
-        self.add_bookmark(0); self.prepare(); self.stage(); self.step()
+        self.add_bookmark(0); self.prepare(); self.stage()
+        self.advance_until(lambda plan: plan["batch_index"] == self.bookmark_batch(plan)[0])
         self.cli.failure = ("bookmark_after", True)
         failed = self.call("import_step")
         self.assertTrue(failed["uncertain"])
@@ -202,20 +245,23 @@ class ContentTests(unittest.TestCase):
         self.assertFalse(any(c[2] in ("POST", "+update") for c in self.cli.calls))
 
     def test_bookmark_mismatch_prevents_advancing_to_following_content(self):
-        self.add_bookmark(0); self.prepare(); self.stage(); self.step(); self.step(); self.step()
+        self.add_bookmark(0); self.prepare(); self.stage()
+        self.advance_until(lambda plan: bool(self.bookmark_batch(plan)[1].get("destination_id")))
         for block_id in self.cli.bookmarks:
             if block_id != "Bookmark": self.cli.bookmarks[block_id]["href"] = "https://wrong.example/"
         result = self.call("import_step")
         self.assertEqual(result["code"], "CONTENT_MISMATCH")
         _, record, plan = self.host.content.read(self.operation)
-        self.assertEqual(plan["batch_index"], 0)
+        bookmark_index, batch = self.bookmark_batch(plan)
+        self.assertEqual(plan["batch_index"], bookmark_index)
+        origin = assert_origin_paragraph(self, plan, "https://www.feishu.cn/docx/Source", self.cli.target)
+        self.assertEqual(self.cli.target["Created"]["children"], [origin, batch["destination_id"]])
         self.assertFalse(record.get("content_verified"))
 
     def test_final_verification_rereads_bookmark_after_earlier_successful_check(self):
         self.add_bookmark(0); self.prepare(); self.stage()
-        for _ in range(4): self.step()
-        _, _, plan = self.host.content.read(self.operation)
-        self.assertTrue(plan["batches"][0]["bookmark_verified"])
+        plan = self.advance_until(lambda plan: self.bookmark_batch(plan)[1].get("bookmark_verified"))
+        self.assertTrue(self.bookmark_batch(plan)[1]["bookmark_verified"])
         self.cli.bookmarks[plan["bindings"]["Bookmark"]]["href"] = "https://changed.example/"
         for _ in range(20):
             result = self.step()
@@ -276,7 +322,7 @@ class ContentTests(unittest.TestCase):
 
     def test_readable_source_rebuilds_all_content_without_copy_permission(self):
         summary = self.prepare()
-        self.assertEqual(summary["block_count"], 6)
+        self.assertEqual(summary["block_count"], 7)  # Source paragraph + the six original blocks including root.
         self.assertFalse(summary["images"][0]["staged"])
         self.assertIsNone(summary["document"])
         self.assertEqual(self.step()["code"], "IMAGES_NOT_READY")
@@ -285,14 +331,14 @@ class ContentTests(unittest.TestCase):
             result = self.step()
             self.assertTrue(result["ok"], result)
         self.assertTrue(result["data"]["complete"])
-        self.assertEqual(result["data"]["counts"], {"blocks": 6, "images": 1})
+        self.assertEqual(result["data"]["counts"], {"blocks": 7, "images": 1})
         self.assertEqual(result["data"]["progress"]["completed"], result["data"]["progress"]["total"])
         self.assertEqual(self.cli.target["NewImage"]["image"]["scale"], 0.5)
         self.assertNotIn("OriginalImage", json.dumps(self.cli.target))
         self.assertNotIn("PrivateComment", json.dumps(self.cli.target))
         self.assertNotIn("cells", self.cli.target["NewTable"]["table"])
         self.assertNotIn("merge_info", self.cli.target["NewTable"]["table"]["property"])
-        self.assertEqual(self.cli.target["Created"]["children"], ["NewText", "NewTable", "NewImage"])
+        self.assert_saved_roots()
         self.assertFalse(any("/copy" in call[3] or "/auth" in call[3] for call in self.cli.calls))
         self.assertFalse(any(call[2] != "GET" and "/Source" in call[3] for call in self.cli.calls))
         count = len(self.cli.calls)
@@ -351,7 +397,8 @@ class ContentTests(unittest.TestCase):
         self.assertEqual(first, second)
         query = json.loads(first[first.index("--params") + 1])
         self.assertEqual(uuid.UUID(query["client_token"]).version, 4)
-        self.assertEqual(len(self.cli.target), 6)
+        self.assertEqual(len(self.cli.target), 7)
+        self.assert_saved_roots()
 
     def test_missing_default_table_and_text_flags_do_not_stop_complete_import(self):
         table = next(b for b in self.cli.source if b["block_id"] == "Table")
@@ -399,7 +446,8 @@ class ContentTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", json.dumps(record))
         self.host = native.NativeHost("/mock/lark-cli", self.directory, self.cli)
         self.assertTrue(self.step()["ok"])
-        self.assertEqual(len(self.cli.target), 6)
+        self.assertEqual(len(self.cli.target), 7)
+        self.assert_saved_roots()
 
     def test_unknown_creation_cannot_be_automatically_replayed(self):
         self.prepare(); self.stage()
@@ -545,8 +593,12 @@ class ContentTests(unittest.TestCase):
         self.cli.source = [{"block_id": "Source", "block_type": 1, "children": [b["block_id"] for b in images]}, *images]
         self.assertEqual(self.prepare()["batch_count"], 2)
         plan = self.host.store.read("content-" + self.operation + ".json", {})
-        self.assertEqual([len(batch["descendants"]) for batch in plan["batches"]], [20, 8])
-        self.assertEqual([root for batch in plan["batches"] for root in batch["children_id"]], [b["block_id"] for b in images])
+        origin = assert_origin_paragraph(self, plan, "https://www.feishu.cn/docx/Source")
+        self.assertEqual([len(batch["descendants"]) for batch in plan["batches"]], [21, 8])
+        self.assertEqual([sum(block["block_type"] == 27 for block in batch["descendants"])
+                          for batch in plan["batches"]], [20, 8])
+        self.assertEqual([root for batch in plan["batches"] for root in batch["children_id"]],
+                         [origin, *[b["block_id"] for b in images]])
 
     def test_source_revision_change_stops_before_document_creation(self):
         original = self.cli.__call__
@@ -640,7 +692,8 @@ class ContentTests(unittest.TestCase):
         self.assertTrue(self.step()["ok"])
         self.assertEqual(self.cli.calls[-1], first)
         self.assertTrue(self.finish()["data"]["complete"])
-        self.assertEqual(len(self.cli.target), 6)
+        self.assertEqual(len(self.cli.target), 7)
+        self.assert_saved_roots()
 
     def test_old_verified_document_can_repair_links_without_recreating_blocks(self):
         self.through_upload()

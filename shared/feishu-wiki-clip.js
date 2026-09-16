@@ -229,7 +229,7 @@
             if (snapshot?.source_url !== job.source.url) throw new Error("网页已跳转，请重新打开要保存的页面。");
             plan = await call("prepare_web_content", { source_url: job.source.url, operation_id: job.id, snapshot });
           }
-        } else plan = await call("prepare_content", { token: sourceToken, operation_id: job.id });
+        } else plan = await call("prepare_content", { token: sourceToken, operation_id: job.id, origin_url: job.source.url });
         if (!plan.title || !Number.isInteger(plan.block_count) || !Array.isArray(plan.images)) throw new Error("未能读取完整正文结构，请稍后重试。");
         await persist({ target, sourceToken, title: plan.title, stage: "collecting",
           counts: { blocks: plan.block_count, images: plan.image_count }, progress: { completed: 0, total: plan.image_count, phase: "collecting" } });
@@ -237,7 +237,7 @@
       if (job.stage === "collecting") {
         let plan = job.source.type === "web"
           ? await call("prepare_web_content", { source_url: job.source.url, operation_id: job.id })
-          : await call("prepare_content", { token: job.sourceToken, operation_id: job.id });
+          : await call("prepare_content", { token: job.sourceToken, operation_id: job.id, origin_url: job.source.url });
         if (job.source.type === "web" && plan.refresh_required === true) {
           // The helper only permits this migration before any image bytes or
           // remote writes exist. Re-extract a known old renderer mistake once,

@@ -248,7 +248,11 @@ class CreateRecoveryTests(unittest.TestCase):
         self.assertEqual(self.cli.target["Created"]["children"], [])
         self.finish()
         self.assertEqual(len(self.requests("POST", DOCUMENTS)), 1)
-        self.assertEqual(self.cli.target["Created"]["children"], ["NewText"])
+        _, _, plan = self.host.content.read(self.operation)
+        origin = fixtures.assert_origin_paragraph(self, plan, self.source["source_url"], self.cli.target)
+        self.assertEqual(self.cli.target["Created"]["children"], [origin, "NewText"])
+        self.assertEqual(self.cli.target["NewText"]["text"], self.source["blocks"][1]["text"])
+        self.assertEqual(set(self.cli.target), {"Created", origin, "NewText"})
 
     def test_absent_marker_defers_without_recreate_then_stops_after_five_minutes(self):
         result = self.start_lost_create(commits=False)
