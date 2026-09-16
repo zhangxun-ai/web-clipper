@@ -40,23 +40,23 @@ npm install --prefix "$HOME/Library/Application Support/FeishuClipper/tools" @la
 
 ### 2. 下载经过校验的连接器
 
-固定源码提交：`ff9a7b81c755c1ddb44cb3c820de9f1d69fd7462`。这是已发布且与当前上手页面兼容的连接器，不需要跟随页面文案版本重新安装。
+固定源码提交：`d3246b525c36c038e380d983c628bbdbafd1d991`。这是已发布且与当前上手页面兼容的连接器，不需要跟随页面文案版本重新安装。
 
 下载地址前缀：
 
 ```text
-https://raw.githubusercontent.com/zhangxun-ai/web-clipper/ff9a7b81c755c1ddb44cb3c820de9f1d69fd7462/helper/
+https://raw.githubusercontent.com/zhangxun-ai/web-clipper/d3246b525c36c038e380d983c628bbdbafd1d991/helper/
 ```
 
 只下载以下三个文件，并逐个核对 SHA-256：
 
 | 文件 | SHA-256 |
 | --- | --- |
-| `feishu_native_host.py` | `5739a4553ca84e8a438737927d56857dbf6876b078ac1da1038da174e1e68f84` |
-| `feishu_content_import.py` | `bc380259be29ad0a0a6857cfc2138b02d0e20a0da8ac2909f17e57467f7314ff` |
+| `feishu_native_host.py` | `426bff03a68a30a3fe093ff994f0283e92bbeba49fec1aa859b0e2968eb621c6` |
+| `feishu_content_import.py` | `e4d6ec5ba812b5a7f782e71097e2b029cc89a2f68aa516dc4f5ea5f0a7a484ea` |
 | `install_feishu_native_host.py` | `10c0b28107df65125b924fd5a1d075e1e375adc84dbc8634a835fb4915c6aef3` |
 
-持久保存到 `~/Library/Application Support/FeishuClipper/source/ff9a7b81c755c1ddb44cb3c820de9f1d69fd7462/helper/`。下载先写本次临时文件，校验通过才进入持久目录；已存在的文件先核对，不能覆盖未知内容。下载或校验失败时明确停止，不能改用未校验的 main 分支。
+持久保存到 `~/Library/Application Support/FeishuClipper/source/d3246b525c36c038e380d983c628bbdbafd1d991/helper/`。下载先写本次临时文件，校验通过才进入持久目录；已存在的文件先核对，不能覆盖未知内容。下载或校验失败时明确停止，不能改用未校验的 main 分支。
 
 此目录是连接器的运行依赖，不是临时下载目录；安装后不能删除或随意改名。这个位置与用户的 GitHub 克隆目录、浏览器商店安装目录无关。
 
@@ -97,6 +97,10 @@ lark-cli config init --new
 
 提示词生成与固定源码校验信息统一放在 `shared/connector-onboarding.js`；变更固定版本时同步本页并重新校验实际下载内容。现有恢复与内容完整性规则没有因安装简化而变化。
 
+上方固定源码包含图片实际尺寸、原生提示框和批量图片绑定支持，与当前扩展配套。旧固定连接器需要更新后才能接收新扩展的图片尺寸参数；从源码安装且 launcher 指向当前工作树的用户可直接使用更新后的 helper。后续修改连接器时，须同步固定提交及校验值，并通过版本一致性回归，避免扩展与连接器不匹配。
+
 回归命令：`npm test`、`npm run test:ui`。首次连接浏览器测试为 `node tests/browser/connector-onboarding.cjs`；Windows 的系统识别仅用浏览器环境模拟，不能据此宣称 Windows 本机飞书剪存已支持。
 
-本次验证：JavaScript 回归、真实 Chromium 中的提示词复制与窄屏布局通过；从 GitHub 实际下载上述三份固定源码并核对 SHA-256，在隔离的用户目录注册 Chrome／Edge／Dia、重复安装，并通过真实本机协议读取 CLI 1.0.88，错误扩展 ID 被拒绝。测试复用了本机已有 Python／Node／CLI，没有在全新 Mac 上从零安装这些依赖，也没有重新进行飞书授权或真实图文写入。
+2026-09-16 验证：同步新版连接器固定提交与文件校验值，224 项 JavaScript、158 项 Python 及首次连接浏览器回归通过。新版真实飞书写入尚未重新验收。
+
+2026-09-08 旧固定版本验证：JavaScript 回归、真实 Chromium 中的提示词复制与窄屏布局通过；从 GitHub 实际下载当时的三份固定源码并核对 SHA-256，在隔离的用户目录注册 Chrome／Edge／Dia、重复安装，并通过真实本机协议读取 CLI 1.0.88，错误扩展 ID 被拒绝。测试复用了本机已有 Python／Node／CLI，没有在全新 Mac 上从零安装这些依赖，也没有重新进行飞书授权或真实图文写入。
