@@ -280,7 +280,8 @@ async function handleExport(format) {
       }
     });
     throwIfExportCanceled();
-    const normalizedPayload = normalizeWechatMarkdownPayload(payload);
+    const normalizedPayload = await materializeWebImageAssets(normalizeWechatMarkdownPayload(payload), activeTabId);
+    throwIfExportCanceled();
 
     const filename = normalizeDownloadFilename(normalizedPayload.filename, format);
     let downloadedFilename = "";
@@ -310,8 +311,8 @@ async function handleExport(format) {
     let obsidianMessage = "";
     if (shouldSaveToObsidian) {
       await saveCurrentMarkdownToObsidian({
-        title: pageInfo?.title || filename.replace(/\.md$/i, ""),
-        sourceUrl: activeTabId ? String((await queryActiveTab())[0]?.url || "") : "",
+        title: normalizedPayload.title || pageInfo?.title || filename.replace(/\.md$/i, ""),
+        sourceUrl: normalizedPayload.sourceUrl || (activeTabId ? String((await queryActiveTab())[0]?.url || "") : ""),
         markdown: normalizedPayload.content,
         assets: normalizedPayload.assets
       });
@@ -1510,20 +1511,42 @@ async function saveCurrentMarkdownToObsidian(payload) {
     throw new Error("Obsidian 目录不可用，请先重新授权");
   }
 
+  const archived = obsidianExportApi.namespaceObsidianAssets(payload.markdown, payload.assets, crypto.randomUUID());
   const note = buildObsidianNoteFile?.({
     title: payload.title,
     sourceUrl: payload.sourceUrl,
     exportedAt: new Date().toISOString(),
-    markdown: extractBodyMarkdown(payload.markdown)
+    markdown: extractBodyMarkdown(archived.markdown)
   });
 
   if (!note) {
     throw new Error("Obsidian 导出模块未加载");
   }
 
+  note.path = await availableObsidianNotePath(binding.handle, note.path);
+  // Publish the note only after all of its images have been written. Failed
+  // image writes cannot replace an existing complete note with a broken one.
+  await writeObsidianAssetFiles(binding.handle, note.path, archived.assets);
   await obsidianVaultStorage.writeTextFiles?.(binding.handle, [note]);
-  await writeObsidianAssetFiles(binding.handle, note.path, payload.assets);
   setObsidianStatus(`已写入 Obsidian：${note.path}`, "ready");
+}
+
+async function availableObsidianNotePath(rootHandle, notePath) {
+  const parts = notePath.split("/");
+  const filename = parts.pop();
+  let directory = rootHandle;
+  for (const part of parts) directory = await directory.getDirectoryHandle(part, { create: true });
+  let candidate = filename;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await directory.getFileHandle(candidate);
+    } catch (error) {
+      if (error.name === "NotFoundError") return [...parts, candidate].join("/");
+      throw error;
+    }
+    candidate = filename.replace(/\.md$/i, `-${crypto.randomUUID().slice(0, 8)}.md`);
+  }
+  throw new Error("Obsidian 同名笔记较多，请更换保存位置后重试。");
 }
 
 async function writeObsidianAssetFiles(rootHandle, notePath, assets) {
@@ -1573,6 +1596,29 @@ function normalizeWechatMarkdownPayload(payload) {
     ...payload,
     content: maybeStripWechatUiNoiseFromMarkdown(payload.content)
   };
+}
+
+async function materializeWebImageAssets(payload, tabId) {
+  const requests = Array.isArray(payload?.imageRequests) ? payload.imageRequests : [];
+  if (!requests.length) return payload;
+  let content = String(payload.content || "");
+  const assets = [...(Array.isArray(payload.assets) ? payload.assets : [])];
+  const extensions = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp" };
+  for (const [index, entry] of requests.entries()) {
+    if (!/^assets\/web-image-\d+$/.test(entry.reference || "")) throw new Error("图片留档路径无效，未生成不完整文件。");
+    throwIfExportCanceled();
+    setStatus(`正在读取原图 ${index + 1}/${requests.length}…`, "loading");
+    const response = await chrome.runtime.sendMessage({ type: "exporter:capture-web-image",
+      sourceUrl: payload.sourceUrl, url: entry.url, tabId });
+    if (!response?.ok) throw new Error(`第 ${index + 1} 张图片未保存：${response?.error || "图片读取失败"}`);
+    const image = response.data;
+    const extension = extensions[image?.mimeType];
+    if (!extension || !image.contentBase64) throw new Error(`第 ${index + 1} 张图片数据无效，未生成缺图留档。`);
+    const path = `${entry.reference}.${extension}`;
+    assets.push({ path, mimeType: image.mimeType, contentBase64: image.contentBase64 });
+    content = content.split(`(${entry.reference})`).join(`(${path})`);
+  }
+  return { ...payload, content, assets, imageRequests: [] };
 }
 
 async function downloadExportPayload(payload, filename, format) {

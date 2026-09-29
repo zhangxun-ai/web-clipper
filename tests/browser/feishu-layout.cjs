@@ -191,6 +191,24 @@ const payloadOf = block => Object.values(block).find(value => value?.elements);
     assert.equal(scysLists.errorCode, "CONTENT_MISMATCH", "non-marker content must still trigger coverage protection");
     console.log("PASS: actual SCYS bullet-dot layout passes capture; native lists retain text/images and reject unconverted prose");
 
+    const nestedLists = await page.evaluate(() => {
+      const host = document.createElement("article");
+      const bullet = (text, nested = "") => `<div class="bullet_container uncircle"><div class="row"><div class="bullet"><div class="bullet-dot">◦</div></div><div class="list"><span>${text}</span></div></div>${nested ? `<div class="list-children"><div class="vc-doc-item">${nested}</div></div>` : ""}</div>`;
+      host.innerHTML = bullet("父项目", bullet("子项目", '<div class="block-order"><span class="order-marker">3.</span><div class="list">第三级<img src="https://example.com/nested.png"></div></div>')) + bullet("下一项目");
+      document.body.append(host);
+      return WebFeishuBlocks.fromRoot(module.exports.__test.cloneWebCaptureRoot(host),
+        { title: "嵌套列表", sourceUrl: "https://scys.com/articleDetail/xq_topic/regression" });
+    });
+    assert.deepEqual(nestedLists.blocks.slice(1).map(textOf).filter(Boolean), ["父项目", "子项目", "第三级", "下一项目"]);
+    const nestedById = new Map(nestedLists.blocks.map(block => [block.block_id, block]));
+    assert.equal(nestedLists.blocks[0].children.length, 2);
+    const first = nestedById.get(nestedLists.blocks[0].children[0]);
+    const child = nestedById.get(first.children[0]);
+    assert.equal(textOf(child), "子项目");
+    assert.equal(nestedById.get(child.children[0]).ordered.style.sequence, "3");
+    assert.equal(nestedLists.images.length, 1);
+    console.log("PASS: SCYS sibling list-children retain three levels, original order, numbering and nested images");
+
     const compact = await page.evaluate(sourceUrl => {
       const quillStyle = document.createElement("style");
       quillStyle.textContent = ".ql-editor { white-space: pre-wrap; }";

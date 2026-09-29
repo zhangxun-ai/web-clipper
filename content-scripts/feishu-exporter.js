@@ -1,7 +1,7 @@
 (function () {
   // Dynamic injection can happen again when the user opens the save page.
   const previousCapture = globalThis.FeishuWebCapture;
-  if (previousCapture?.version === 5) return;
+  if (previousCapture?.version === 6) return;
   const MESSAGE_GET_PAGE_INFO = "feishu-export:get-page-info";
   const MESSAGE_EXPORT_DOCUMENT = "feishu-export:export-document";
   const MESSAGE_GET_SCYS_COURSE_OUTLINE = "feishu-export:get-scys-course-outline";
@@ -204,7 +204,7 @@
     return true;
   });
 
-  globalThis.FeishuWebCapture = { version: 5, snapshot: captureWebSnapshot };
+  globalThis.FeishuWebCapture = { version: 6, snapshot: captureWebSnapshot };
 
   async function captureWebSnapshot() {
     if (!globalThis.WebFeishuBlocks?.fromRoot) throw new Error("网页剪存组件未加载，请刷新扩展和原网页后重试。");
@@ -1360,22 +1360,23 @@
   }
 
   async function exportGenericWebDocument(format, options) {
+    const sourceUrl = location.href;
+    const liveRoot = await waitForWebCaptureRoot(sourceUrl);
     const meta = getGenericWebMeta();
-    const liveRoot = getGenericExportRoot();
     const rawHtml = liveRoot?.innerHTML || "";
-    const clonedRoot = liveRoot.cloneNode(true);
+    const clonedRoot = cloneWebCaptureRoot(liveRoot);
 
     sanitizeGenericArticle(clonedRoot, { includeImages: options.includeImages !== false });
+    const imageRequests = format === "markdown" && options.localImageAssets === true && options.includeImages !== false
+      ? prepareGenericImageAssets(clonedRoot) : [];
     let markdownBody = cleanupMarkdown(convertBlock(clonedRoot, 0));
 
     if (options.includeImages === false) {
       markdownBody = stripMarkdownImages(markdownBody);
     }
 
-    markdownBody = formatReadableMarkdown(markdownBody, {
-      siteHint: getGenericReadableSiteHint(location.hostname)
-    });
-
+    // Preserve authored paragraphs; readability heuristics must not rewrite
+    // an archive of the original article.
     if (!markdownBody) {
       throw new Error("未提取到网页正文");
     }
@@ -1384,7 +1385,10 @@
       return {
         filename: buildFilename(meta.title, "md"),
         mimeType: "text/markdown;charset=utf-8",
-        content: buildMarkdownDocument(meta, markdownBody)
+        content: buildMarkdownDocument(meta, markdownBody),
+        sourceUrl,
+        title: meta.title,
+        imageRequests
       };
     }
 
@@ -1406,6 +1410,21 @@
       mimeType: "application/json;charset=utf-8",
       content: JSON.stringify(payload, null, 2)
     };
+  }
+
+  function prepareGenericImageAssets(root) {
+    const images = new Map();
+    for (const image of root.querySelectorAll("img")) {
+      const url = toAbsoluteUrl(image.getAttribute("src") || "");
+      if (!url) throw new Error("正文图片缺少可读取地址，未生成缺图留档。");
+      let entry = images.get(url);
+      if (!entry) {
+        entry = { url, reference: `assets/web-image-${String(images.size + 1).padStart(3, "0")}` };
+        images.set(url, entry);
+      }
+      image.__localMarkdownImagePath = entry.reference;
+    }
+    return [...images.values()];
   }
 
   function getGenericWebMeta() {
@@ -1603,6 +1622,8 @@
       return false;
     }
 
+    // SCYS uses block-header for authored headings, not page chrome.
+    if (node.classList.contains("block-header")) return false;
     const identity = `${node.id || ""} ${typeof node.className === "string" ? node.className : ""}`;
     return /\b(comment|footer|header|nav|sidebar|aside|share|social|related|recommend|advert|ads|banner|popup|modal|subscribe|breadcrumb|catalog|toc|toolbar|toolbox)\b/i.test(identity);
   }
@@ -4102,7 +4123,7 @@
     const headingLevel = getHeadingLevel(node);
     if (headingLevel) {
       const content = cleanupMarkdown(convertInlineChildren(node));
-      if (!content || content === normalizeTitle(extractVisibleTitle())) {
+      if (!content || (!isGenericBodyHeading(node) && content === normalizeTitle(extractVisibleTitle()))) {
         return "";
       }
       return `${"#".repeat(headingLevel)} ${content}`;
@@ -4203,7 +4224,7 @@
       return "";
     }
 
-    return `${"  ".repeat(depth)}- ${content}`;
+    return appendScysListChildren(node, `${"  ".repeat(depth)}- ${content}`, depth);
   }
 
   function scysOrderedBlockToMarkdown(node, depth) {
@@ -4217,7 +4238,17 @@
       return "";
     }
 
-    return `${"  ".repeat(depth)}${normalizedMarker} ${content}`;
+    return appendScysListChildren(node, `${"  ".repeat(depth)}${normalizedMarker} ${content}`, depth);
+  }
+
+  function appendScysListChildren(node, item, depth) {
+    const children = node.querySelector(":scope > .list-children");
+    if (!children) return item;
+    // Convert each wrapped child at its own root, then indent the complete
+    // result. Container cleanup trims leading whitespace from the first line.
+    const nested = Array.from(children.childNodes).map(child => convertBlock(child, 0)).filter(Boolean).join("\n\n");
+    const indented = nested.split("\n").map(line => line ? `${"  ".repeat(depth + 1)}${line}` : line).join("\n");
+    return nested ? `${item}\n\n${indented}` : item;
   }
 
   function isScysRenderedTableBlock(node) {
@@ -4330,8 +4361,8 @@
       return "";
     }
 
-    const alt = normalizeInlineText(node.getAttribute("alt") || "");
-    return `![${alt}](${toAbsoluteUrl(src)})`;
+    const alt = normalizeInlineText(node.getAttribute("alt") || "").replace(/([\\\[\]])/g, "\\$1");
+    return `![${alt}](${node.__localMarkdownImagePath || toAbsoluteUrl(src)})`;
   }
 
   function tableToMarkdown(table) {
@@ -4378,6 +4409,10 @@
       return Math.min(Math.max(Number(ariaLevel) || 1, 1), 6);
     }
 
+    const headingClass = String(node.className || "").match(/\b(?:heading|block-h|doc-heading-)([1-6])\b/);
+    if (headingClass) return Number(headingClass[1]);
+    const scysHeading = String(node.className || "").match(/\bblock([3-8])-header\b/);
+    if (scysHeading) return Number(scysHeading[1]) - 2;
     const style = window.getComputedStyle(node);
     const fontSize = Number.parseFloat(style.fontSize || "0");
     const fontWeight = Number.parseInt(style.fontWeight || "400", 10);
@@ -4454,6 +4489,8 @@
       __test: {
         convertBlock,
         getGenericWebMeta,
+        exportGenericWebDocument,
+        prepareGenericImageAssets,
         captureWebSnapshot,
         cloneWebCaptureRoot,
         waitForWebCaptureRoot,

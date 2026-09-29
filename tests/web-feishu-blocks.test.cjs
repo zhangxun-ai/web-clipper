@@ -61,6 +61,30 @@ test("SCYS bullet-dot markers become native lists without bypassing prose or ima
   assert(content(inside).join("").includes("•"), "a glyph inside list content must still be consumed as content");
 });
 
+test("SCYS sibling list-children retain nested lists, numbering, images and their parent", () => {
+  const item = (label, nested = [], ordered = false, marker = "1.") => el("div", { class: ordered ? "block-order" : "bullet_container" },
+    el("div", { class: "row" }, ordered ? el("span", { class: "order-marker" }, marker)
+      : el("div", { class: "bullet" }, el("div", { class: "bullet-dot" }, "•")),
+    el("div", { class: "list" }, label)),
+    ...(nested.length ? [el("div", { class: "list-children" }, nested.map(child => el("div", { class: "vc-doc-item" }, child)))] : []));
+  const result = capture(item("父项", [item("子项", [item("孙项", [], true, "3.")]),
+    item(["第二子项", el("img", { src: "/nested.png" })])]), item("第二父项", [], true, "4."));
+  assert.deepEqual(content(result), ["父项", "子项", "孙项", "第二子项", "第二父项"]);
+  const byId = new Map(result.blocks.map(block => [block.block_id, block]));
+  const top = result.blocks[0].children.map(id => byId.get(id));
+  assert.equal(top.length, 2);
+  assert.deepEqual(top[0].children.map(id => text(byId.get(id))), ["子项", "第二子项"]);
+  const grandchild = byId.get(byId.get(top[0].children[0]).children[0]);
+  assert.equal(grandchild.ordered.style.sequence, "3");
+  assert.equal(top[1].ordered.style.sequence, "4");
+  assert.equal(result.images.length, 1);
+  reachable(result);
+  // Unrecognized content beside the list body must still fail closed.
+  const invalid = item("父项", [item("子项")]);
+  invalid.childNodes.push(el("p", {}, "未知兄弟正文"));
+  assert.throws(() => capture(invalid), { code: "CONTENT_MISMATCH" });
+});
+
 test("SCYS callouts retain their icon, colors and grouped content without an extra emoji paragraph", () => {
   const callout = (emoji, ...body) => el("div", { class: "callout border_color_2 background_color_2" },
     el("div", { class: "block-icon" }, el("div", { class: "callout-emoji-container" }, el("span", { class: "emoji-text" }, emoji))),

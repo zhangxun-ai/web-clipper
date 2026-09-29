@@ -1487,3 +1487,28 @@ test("a legacy migration never extends an already recorded earlier deadline or a
   assert.equal(runs, 0);
   assert.deepEqual(rejected.store.feishuWikiClipJob, oversized);
 });
+
+test('local image export accepts only its popup and retains source and host-grant checks', async () => {
+  const svc = service();
+  const request = { type: 'exporter:capture-web-image', sourceUrl: 'https://scys.com/articleDetail/xq_topic/123', tabId: 42, url: 'https://mmbiz.qpic.cn/article.png' };
+  const popup = { id: svc.id, url: svc.base + 'popup.html' };
+  for (const sender of [
+    { id: svc.id, url: request.sourceUrl, tab: { id: 42 } },
+    { id: 'other', url: popup.url },
+    { id: svc.id, url: svc.base + 'feishu-save.html' },
+    { id: svc.id, url: svc.base + 'popup.html.evil' }
+  ]) assert.equal((await svc.send(request, sender)).ok, false);
+  let sourceUrl = request.sourceUrl, granted = false;
+  svc.chrome.tabs = { get: async id => ({ id, url: sourceUrl, status: 'complete' }), query: async () => [] };
+  svc.chrome.permissions = { contains: async ({ origins }) => { assert.deepEqual(Array.from(origins), ['https://mmbiz.qpic.cn/*']); return granted; } };
+  svc.chrome.scripting = { executeScript: async input => input.files ? [] : [{ frameId: 0, result: { ok: false, error: { message: '网站暂不允许读取该图片' } } }] };
+  assert.equal((await svc.send(request, popup)).ok, false);
+  granted = true;
+  const captured = await svc.send(request, popup);
+  assert.equal(captured.ok, true);
+  assert.equal(captured.data.publicUrl, request.url);
+  assert.equal((await svc.send(request, { ...popup, tab: { id: 77 } })).ok, true);
+  sourceUrl = 'https://scys.com/articleDetail/xq_topic/other';
+  assert.equal((await svc.send(request, popup)).ok, false);
+  assert.equal(svc.calls.length, 0, 'local image exports never access Native Messaging');
+});

@@ -676,6 +676,22 @@
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message?.type === "exporter:capture-web-image") {
+      // This read-only route is for the extension export UI. A content script
+      // cannot turn the image fetch fallback into an arbitrary host proxy.
+      if (sender.id !== chrome.runtime.id
+        || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL("popup.html")) {
+        sendResponse({ ok: false, error: "图片留档只能从插件导出页发起。" });
+        return false;
+      }
+      Promise.resolve().then(async () => {
+        const source = api.parseSourceUrl(message.sourceUrl);
+        if (source.type !== "web" || !Number.isInteger(message.tabId)) throw new Error("原网页信息无效，请重新打开插件。");
+        return captureImage(source, { url: message.url }, message.tabId);
+      }).then(data => sendResponse({ ok: true, data }))
+        .catch(error => sendResponse({ ok: false, error: error.message || "图片读取失败" }));
+      return true;
+    }
     if (message?.type !== "feishu-clip") return false;
     // Only our dedicated extension page can access the native host; content
     // scripts and other extensions cannot turn this bridge into a write proxy.

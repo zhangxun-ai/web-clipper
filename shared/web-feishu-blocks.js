@@ -496,6 +496,7 @@
         blocks.splice(before, 1);
       }
       if (!item.children.length) delete item.children;
+      return item;
     }
 
     function convertTable(node, parent, style, depth) {
@@ -625,8 +626,10 @@
         return;
       }
       if (name === "li" || hasClass(node, "bullet_container") || hasClass(node, "block-order")) {
-        const list = findDescendants(node, (child) => hasClass(child, "list"), (child) => hasClass(child, "list"))[0] || node;
-        const marker = findDescendants(node, (child) => hasClass(child, "order-marker"))[0];
+        const ownBoundary = child => hasClass(child, "list") || hasClass(child, "list-children")
+          || hasClass(child, "bullet_container") || hasClass(child, "block-order");
+        const list = findDescendants(node, child => hasClass(child, "list"), ownBoundary)[0] || node;
+        const marker = findDescendants(node, child => hasClass(child, "order-marker"), ownBoundary)[0];
         if (list !== node) {
           const listNodes = new Set([list, ...findDescendants(list, () => true)]);
           for (const label of findDescendants(node, child => !listNodes.has(child) && (
@@ -636,9 +639,21 @@
             || (isScysSource && hasClass(child, "bullet-dot") && hasClass(child.parentElement, "bullet")
               && children(child).every(part => part.nodeType === 3)
               && /^[•·●○◦▪▫‣⁃]$/.test(String(child.textContent || "").trim()))
-          ))) decorations.add(label);
+          ), ownBoundary)) decorations.add(label);
         }
-        convertListItem(list, parent, hasClass(node, "block-order"), Number.parseInt(marker?.textContent || "1", 10) || 1, style, depth + 1); return;
+        const item = convertListItem(list, parent, hasClass(node, "block-order"), Number.parseInt(marker?.textContent || "1", 10) || 1, style, depth + 1);
+        // SCYS renders nested items beside .list, not inside it. Keep them
+        // under their owning item; the source coverage check still rejects
+        // unknown siblings instead of silently discarding prose or images.
+        if (isScysSource && list !== node) {
+          const nested = findDescendants(node, child => hasClass(child, "list-children"), ownBoundary);
+          for (const group of nested) {
+            item.children ||= [];
+            convert(group, item, style, depth + 1);
+          }
+          if (!item.children?.length) delete item.children;
+        }
+        return;
       }
       const level = headingLevel(node);
       if (placeholderParagraph(node)) {

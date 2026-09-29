@@ -1,4 +1,23 @@
 (function (globalScope) {
+  function namespaceObsidianAssets(markdown, assets, namespace) {
+    const files = Array.isArray(assets) ? assets : [];
+    let content = String(markdown || "");
+    if (files.length && !/^[a-zA-Z0-9-]{1,80}$/.test(String(namespace || ""))) {
+      throw new Error("Obsidian 图片目录无效");
+    }
+    const mapped = files.map(asset => {
+      const path = String(asset?.path || "");
+      if (!path || path.split("/").some(part => !part || part === "." || part === "..")
+        || /[\\\u0000-\u001f:]/.test(path) || !asset.contentBase64) {
+        throw new Error("Obsidian 图片文件无效，未写入不完整笔记");
+      }
+      const mappedPath = `assets/${namespace}/${path.replace(/^assets\//, "")}`;
+      content = content.split(`(${path})`).join(`(${mappedPath})`);
+      return { ...asset, path: mappedPath };
+    });
+    return { markdown: content, assets: mapped };
+  }
+
   function buildObsidianNoteFile(payload) {
     const title = cleanupTitle(payload?.title, "未命名文档");
     const exportedAt = normalizeIsoTimestamp(payload?.exportedAt);
@@ -182,6 +201,7 @@
   }
 
   const api = {
+    namespaceObsidianAssets,
     buildObsidianNoteFile,
     buildObsidianCourseBundle
   };
