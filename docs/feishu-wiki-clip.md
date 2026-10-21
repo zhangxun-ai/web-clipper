@@ -164,6 +164,8 @@ docx:document:write_only docs:document.media:upload space:document:retrieve offl
 
 ## 验证
 
+2026-10-21 GitHub 同步前复验：连接器固定源码更新为 `675356047546c7065af62f7f7d7a68e7c653f2e5`，并同步导入模块 SHA-256 与安装说明。此前固定源码一致性失败已解决；全量 JavaScript 300 项、飞书连接器 Python 171 项、公众号 Python 12 项及完整 `npm run test:browser` 通过，语法与补丁检查通过。浏览器套件使用真实 MV3、下载和磁盘附件，飞书与供应商响应仍为模拟；未运行收费 live 测试，未新增真实飞书写入。
+
 2026-10-21 单篇本地带图导出：改为下载根目录的标题 Markdown 加 `assets/<保存标识>/` 图片附件，不再内嵌 Base64 或强制 ZIP。复用 Obsidian 的附件隔离逻辑，逐图等待 Chrome 下载完成并核对实际路径；图片完整后才生成文章，重名另存、取消、图片中断和路径被更改均有回归。飞书本地带图读取 `preview_type=16`，通过共享读取器识别真实格式、解码及核对像素，失败不回退远程链接。公众号单篇使用图片请求占位，既有批量内嵌格式保持兼容。exporter v7 通过 `export-document-v2` 新消息升级旧页面，新入口发送前主动注入依赖，避免旧 listener 未响应时无法升级。
 
 真实 Chromium 的 `local-images.cjs` 使用独立临时下载目录和原生下载命名，检查完成状态、磁盘原字节、重复配图、同名文章、旧 v6 页面升级、离线解码以及缺图时停止；`web-local-export.cjs` 验证 1940×1076 原图不会被 DOM 缩略图或 JPEG 误标替代，并验证公众号新旧模式。`popup-ui.cjs`、`image-format.cjs`、`feishu-fidelity.cjs` 及相关单元、语法、补丁检查通过。全量 JavaScript 300 项中 299 项通过，唯一未通过仍为 10-20 修改 helper 后的固定发布源码 SHA 校验，未改变或绕过该检查。未执行完整浏览器套件、重新发布或新增真实飞书写入。用户确认原有直接保存到 Obsidian 可见图片；本轮自动浏览器验收不冒充用户 Obsidian 的实机显示验收。
