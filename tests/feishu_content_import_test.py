@@ -361,6 +361,61 @@ class ContentTests(unittest.TestCase):
         self.stage()
         self.assertTrue(self.chunk(0)["data"]["complete"])
 
+    def test_wrong_response_mime_is_canonicalized_for_old_workers_and_uploads(self):
+        self.prepare()
+        for offset in range(0, len(self.png), 196608):
+            result = self.call("stage_image", block_id="Image", offset=offset, total_size=len(self.png),
+                               mime_type="image/jpeg", data_base64=base64.b64encode(self.png[offset:offset + 196608]).decode())
+            self.assertTrue(result["ok"], result)
+        self.assertTrue(result["data"]["complete"])
+        _, _, plan = self.host.content.read(self.operation)
+        self.assertEqual(plan["images"][0]["mime_type"], "image/png")
+        self.finish()
+        upload = next(call for call in self.cli.calls if call[3].endswith("/medias/upload_all"))
+        self.assertEqual(json.loads(upload[upload.index("--data") + 1])["file_name"], "image.png")
+
+    def test_legacy_failed_file_and_wrong_partial_mime_resume_without_replacing_bytes(self):
+        for persisted in (False, True):
+            with self.subTest(persisted=persisted):
+                self.setUp(); self.prepare()
+                size = 196608 if persisted else len(self.png)
+                path = self.host.content.image_path(self.operation, "Image")
+                path.write_bytes(self.png[:size])
+                if persisted:
+                    name = "content-" + self.operation + ".json"
+                    plan = self.host.store.read(name, {})
+                    plan["images"][0].update(total_size=len(self.png), mime_type="image/jpeg")
+                    self.host.store.write(name, plan)
+                self.host = native.NativeHost("/mock/lark-cli", self.directory, self.cli)
+                # Byte changes and total-size changes still fail before correcting MIME.
+                conflicting = self.png[:20] + b"bad" + self.png[23:]
+                self.assertEqual(self.chunk(0, content=conflicting)["code"], "IMAGE_CONFLICT")
+                if persisted:
+                    self.assertEqual(self.chunk(0, content=self.png + b"x")["code"], "IMAGE_CONFLICT")
+                for offset in range(0, len(self.png), 196608):
+                    result = self.chunk(offset)
+                    self.assertTrue(result["ok"], result)
+                self.assertTrue(result["data"]["complete"])
+                self.assertEqual(path.read_bytes(), self.png)
+                _, _, plan = self.host.content.read(self.operation)
+                self.assertEqual(plan["images"][0]["mime_type"], "image/png")
+                self.assertIsNone(self.prepare()["document"])
+
+    def test_mime_recovery_never_changes_committed_image_metadata(self):
+        for key, value in (("staged", True), ("sha256", "existing"), ("uploaded_token", "Uploaded"),
+                           ("upload_attempts", 1), ("bound", True), ("bind_client_token", "Binding")):
+            with self.subTest(key=key):
+                self.setUp(); self.prepare()
+                name = "content-" + self.operation + ".json"
+                plan = self.host.store.read(name, {})
+                plan["images"][0].update(total_size=len(self.png), mime_type="image/jpeg", **{key: value})
+                self.host.store.write(name, plan)
+                path = self.host.content.image_path(self.operation, "Image")
+                path.write_bytes(self.png)
+                self.assertEqual(self.chunk(0)["code"], "IMAGE_CONFLICT")
+                self.assertEqual(self.host.store.read(name, {}), plan)
+                self.assertEqual(path.read_bytes(), self.png)
+
     def test_unknown_create_outcome_is_never_reissued_after_restart(self):
         self.prepare()
         self.stage()

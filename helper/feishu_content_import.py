@@ -753,12 +753,17 @@ class ContentImporter:
         return self.store.file("image-" + self.identifier(operation, True) + "-" + self.identifier(block_id) + ".bin")
 
     @staticmethod
+    def image_mime(data):
+        signatures = (("image/png", data.startswith(b"\x89PNG\r\n\x1a\n")),
+                      ("image/jpeg", data.startswith(b"\xff\xd8\xff")),
+                      ("image/gif", data[:6] in (b"GIF87a", b"GIF89a")),
+                      ("image/webp", data[:4] == b"RIFF" and data[8:12] == b"WEBP"),
+                      ("image/bmp", data.startswith(b"BM")))
+        return next((mime for mime, matches in signatures if matches), None)
+
+    @staticmethod
     def image_signature(data, mime):
-        return ((mime == "image/png" and data.startswith(b"\x89PNG\r\n\x1a\n")) or
-                (mime == "image/jpeg" and data.startswith(b"\xff\xd8\xff")) or
-                (mime == "image/gif" and data[:6] in (b"GIF87a", b"GIF89a")) or
-                (mime == "image/webp" and data[:4] == b"RIFF" and data[8:12] == b"WEBP") or
-                (mime == "image/bmp" and data.startswith(b"BM")))
+        return ContentImporter.image_mime(data) == mime
 
     @staticmethod
     def staged_pixel_size(path):
@@ -882,7 +887,7 @@ class ContentImporter:
             self.fail("图片分块编码无效。", "INVALID_PARAMS")
         if not data or len(data) > MAX_CHUNK or offset + len(data) > total:
             self.fail("图片分块边界无效。", "INVALID_PARAMS")
-        if "total_size" in image and (image["total_size"] != total or image["mime_type"] != mime):
+        if "total_size" in image and image["total_size"] != total:
             self.fail("图片元数据与此前分块不一致。", "IMAGE_CONFLICT")
         path = self.image_path(operation, block_id)
         present = path.stat().st_size if path.exists() else 0
@@ -898,6 +903,21 @@ class ContentImporter:
             # A resumed extension may use larger transport chunks. Verify the
             # existing prefix, then append only genuinely new bytes.
             remaining = data[overlap:]
+        # HTTP Content-Type can mislabel a PNG as JPEG. The file bytes remain
+        # authoritative, including when an older worker resumes a partial file.
+        # Only correct uncommitted metadata; never reset an upload/binding/hash.
+        prefix = b""
+        if present:
+            with path.open("rb") as stream:
+                prefix = stream.read(16)
+        header = (prefix + remaining[:max(0, 16 - len(prefix))])[:16]
+        detected_mime = self.image_mime(header)
+        if detected_mime:
+            mime = detected_mime
+        if image.get("mime_type") and image["mime_type"] != mime:
+            if (not detected_mime or any(image.get(key) for key in
+                    ("staged", "sha256", "uploaded_token", "upload_attempts", "bound", "bind_client_token"))):
+                self.fail("图片元数据与此前分块不一致。", "IMAGE_CONFLICT")
         if remaining:
             if image.get("staged"):
                 self.fail("图片已暂存完成，不能追加内容。", "IMAGE_CONFLICT")
