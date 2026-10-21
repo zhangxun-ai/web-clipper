@@ -3,94 +3,64 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文档本地导出</title>
+    <title>网页剪存</title>
     <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="popup-layout.css">
   </head>
-  <body>
-    <main class="app">
+  <body class="popup-view">
+    <main class="app popup-app">
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Z"/><path d="M14 3v6h6M8 13h5M8 17h8"/></svg></span>
-          <div class="topbar-copy">
-            <h1>文档本地导出</h1>
-          </div>
+          <img class="brand-logo" src="icon/brand.svg" width="40" height="40" alt="">
+          <h1>网页剪存</h1>
         </div>
-        <a id="openExportSettings" class="topbar-link" href="#popupAdvancedSettings" aria-label="打开导出设置" title="导出设置"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></a>
+        <button id="openExportSettings" class="icon-button" type="button" aria-label="设置" aria-controls="popupAdvancedSettings" aria-expanded="false" title="设置"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m9 3-.6 2.3-2 .9-2.1-.6-2 3.5 1.6 1.7v2.4L2.3 15l2 3.5 2.1-.6 2 .9L9 21h4l.6-2.2 2-.9 2.1.6 2-3.5-1.6-1.8v-2.4l1.6-1.7-2-3.5-2.1.6-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></svg></button>
       </header>
 
-      <section id="workspaceShell" class="panel workspace-shell" aria-label="当前页面导出">
-        <div class="workspace-main">
-          <section class="surface-card" aria-labelledby="docTitle">
-            <div id="status" class="status status-loading" role="status" aria-live="polite">正在检测当前页面…</div>
-            <div class="surface-copy">
-              <h2 id="docTitle">正在读取文章标题…</h2>
-              <div class="source-meta">
-                <span id="docType" class="meta-value">正在识别类型</span>
-                <span id="detectedCategoryBadge" class="category-badge">识别中</span>
-              </div>
-              <p id="primarySummary" class="subtitle-inline">正在检查可用的导出方式…</p>
-            </div>
-          </section>
+      <section id="workspaceShell" class="workspace-shell" aria-label="保存当前文章">
+        <div class="source-meta"><span id="docType" class="meta-value">正在识别页面</span><span id="detectedCategoryBadge" class="category-badge" hidden></span></div>
+        <h2 id="docTitle">正在读取文章标题…</h2>
+        <p id="primarySummary" class="subtitle-inline" hidden></p>
+        <div id="status" class="status status-loading" role="status" aria-live="polite">正在检测当前页面…</div>
 
-          <section class="surface-card preset-panel" aria-labelledby="presetHeading">
-            <div class="panel-head preset-heading">
-              <h2 id="presetHeading">导出方式</h2>
-              <p id="presetSummary" class="subtitle-inline" aria-live="polite" hidden></p>
-            </div>
-            <div id="presetBar" class="preset-bar" aria-label="导出方式">
-              <button class="preset-card" type="button" data-preset="quick-export" aria-pressed="false">
-                <span class="preset-title">快速导出</span>
-                <span class="preset-desc">纯文字 Markdown</span>
-              </button>
-              <button class="preset-card" type="button" data-preset="ai-ready" aria-pressed="false">
-                <span class="preset-title">带图留档</span>
-                <span class="preset-desc">图文离线保存</span>
-              </button>
-              <button class="preset-card" type="button" data-preset="obsidian" aria-pressed="false">
-                <span class="preset-title">Obsidian</span>
-                <span class="preset-desc">写入笔记目录</span>
-              </button>
-            </div>
-            <div class="actions">
-              <button id="primaryAction" class="button button-primary" type="button" disabled>导出当前页面</button>
-              <button id="openFeishuSave" class="button" type="button" disabled>保存到飞书</button>
-              <button id="secondaryAction" class="button" type="button" hidden disabled>更多操作</button>
-            </div>
-          </section>
-        </div>
-            <details id="popupAdvancedSettings" class="advanced-settings">
-              <summary class="advanced-summary">自定义导出设置</summary>
-              <div class="advanced-content">
-                <div class="quick-card">
-                  <span class="field-label">输出目标</span>
-                  <div class="segmented" role="radiogroup" aria-label="输出目标">
-                    <label class="segment">
-                      <input id="outputTargetDownload" type="radio" name="outputTarget" value="download" checked>
-                      <span>仅下载</span>
-                    </label>
-                    <label class="segment">
-                      <input id="outputTargetBoth" type="radio" name="outputTarget" value="both">
-                      <span>下载 + Obsidian</span>
-                    </label>
-                    <label class="segment">
-                      <input id="outputTargetObsidian" type="radio" name="outputTarget" value="obsidian">
-                      <span>仅 Obsidian</span>
-                    </label>
-                  </div>
-                </div>
-
-                <label class="toggle toggle-quick" for="includeImages">
-                  <input id="includeImages" type="checkbox">
-                  <span class="toggle-copy">
-                    <span class="toggle-title">保留图片</span>
-                    <span class="toggle-desc">将图片嵌入 Markdown，离线可查看，文件体积会增大。</span>
-                  </span>
-                </label>
-
-                <p id="primaryHint" class="hint">当前页的主操作会始终显示在这里。</p>
-              </div>
-            </details>
+        <section class="destination-panel" aria-labelledby="destinationHeading">
+          <h2 id="destinationHeading">保存到</h2>
+          <div id="destinationBar" class="destination-bar" role="group" aria-label="保存位置">
+            <button class="destination-option" type="button" data-destination="feishu" aria-pressed="true"><img src="icon/feishu.png" width="24" height="24" alt=""><span>飞书</span></button>
+            <button class="destination-option" type="button" data-destination="obsidian" aria-pressed="false"><img src="icon/obsidian.svg" width="24" height="24" alt=""><span>Obsidian</span></button>
+            <button class="destination-option" type="button" data-destination="local" aria-pressed="false"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>本地</span></button>
+          </div>
+          <button id="changeDestination" class="destination-location" type="button"><span id="destinationValue">选择知识库位置</span><span id="changeDestinationLabel">更改</span><svg class="chevron" aria-hidden="true" viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg></button>
+          <p id="destinationConnection" class="connection-indicator" role="status">正在检测连接…</p>
+          <label id="contentOptions" class="toggle content-options" for="includeImages" hidden><input id="includeImages" type="checkbox"><span>保留图片</span></label>
+          <div class="actions primary-actions">
+            <button id="primaryAction" class="button button-primary" type="button" hidden disabled>导出当前页面</button>
+            <button id="openFeishuSave" class="button button-primary" type="button" disabled>保存到飞书</button>
+            <button id="secondaryAction" class="button" type="button" hidden disabled>更多操作</button>
+          </div>
+        </section>
       </section>
+
+      <details id="popupAdvancedSettings" class="advanced-settings popup-settings" hidden>
+        <summary class="advanced-summary">导出设置</summary>
+        <div class="advanced-content">
+          <p class="hint">以下设置用于本地和 Obsidian 导出，也用于批量与专栏。</p>
+          <div class="quick-card">
+            <span class="field-label">输出位置</span>
+            <div class="segmented" role="radiogroup" aria-label="输出位置">
+              <label class="segment"><input id="outputTargetDownload" type="radio" name="outputTarget" value="download" checked><span>仅本地</span></label>
+              <label class="segment"><input id="outputTargetBoth" type="radio" name="outputTarget" value="both"><span>本地 + Obsidian</span></label>
+              <label class="segment"><input id="outputTargetObsidian" type="radio" name="outputTarget" value="obsidian"><span>仅 Obsidian</span></label>
+            </div>
+          </div>
+          <p id="primaryHint" class="hint" hidden></p>
+        </div>
+      </details>
+
+      <details id="recentSaves" class="advanced-settings recent-saves">
+        <summary class="advanced-summary"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg><span>最近保存</span><span id="recentSummary" class="drawer-value"></span></summary>
+        <div class="advanced-content"><ul id="recentSaveList" class="recent-list" aria-label="最近保存到飞书"></ul><p id="recentEmpty" class="hint">保存到飞书的记录会显示在这里。</p><button id="moreRecentSaves" class="text-button" type="button" hidden>显示更多</button></div>
+      </details>
 
       <details id="toolsDrawer" class="advanced-settings tools-drawer">
         <summary class="advanced-summary"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>批量与专栏工具</summary>
@@ -113,6 +83,76 @@
           <button id="scysExportCourse" class="button button-primary" type="button" disabled>导出当前专栏</button>
           <button id="scysExportCurrent" class="button" type="button" disabled>仅导出当前章节</button>
         </div>
+      </section>
+
+      <section id="wechatWorkspace" class="panel workspace-panel" hidden>
+        <div class="panel-head panel-head-tight">
+          <h2>公众号文章</h2>
+          <p class="subtitle-inline">按日期查看同号文章，勾选后仅下载到本地 ZIP 或 Markdown。</p>
+          <p class="hint">已有历史按日期直接查看；首次获取或刷新约 $0.01/页。文章会陆续显示，失败后可继续。</p>
+        </div>
+
+        <div id="helperStatus" class="status status-loading" role="status" aria-live="polite" hidden></div>
+
+        <div class="field-group">
+          <label class="field-label" for="helperSeedUrl">该公众号任意一篇文章链接</label>
+          <textarea
+            id="helperSeedUrl"
+            class="text-input text-area text-area-compact"
+            placeholder="https://mp.weixin.qq.com/s/…"
+          ></textarea>
+        </div>
+
+        <div class="field-row">
+          <div class="field-group field-group-tight">
+            <label class="field-label" for="helperStartDate">开始日期</label>
+            <input id="helperStartDate" class="text-input" type="date">
+          </div>
+          <div class="field-group field-group-tight">
+            <label class="field-label" for="helperEndDate">结束日期</label>
+            <input id="helperEndDate" class="text-input" type="date">
+          </div>
+        </div>
+
+        <div class="actions actions-uneven">
+          <button id="helperCheck" class="button" type="button">检查下载连接</button>
+          <button id="helperDownload" class="button button-primary" type="button">获取文章列表</button>
+        </div>
+        <button id="helperRefresh" class="text-button" type="button" hidden>刷新账号历史（重新请求）</button>
+
+        <section id="helperArticleResults" class="history-results" aria-labelledby="helperArticlesHeading" hidden>
+          <h3 id="helperArticlesHeading">文章列表</h3>
+          <p id="helperArticleSummary" class="history-context"></p>
+          <p id="helperListNotice" class="hint" aria-live="polite"></p>
+          <div class="history-selection-toolbar">
+            <span id="helperSelectionSummary" aria-live="polite">已选 0 篇</span>
+            <div class="history-selection-actions">
+              <button id="helperSelectAll" class="text-button" type="button">全选</button>
+              <button id="helperSelectNone" class="text-button" type="button">清空</button>
+            </div>
+          </div>
+          <p id="helperArticleEmpty" class="hint" hidden>该公众号在此日期范围内没有文章，可调整日期再获取。</p>
+          <ul id="helperArticleList" class="history-articles" aria-label="范围内公众号文章"></ul>
+          <div class="history-download-options">
+            <div class="field-group field-group-tight">
+              <label class="field-label" for="helperOutputFormat">本地下载格式</label>
+              <select id="helperOutputFormat" class="text-input">
+                <option value="zip" selected>ZIP 压缩包</option>
+                <option value="markdown">Markdown 文件（逐篇）</option>
+              </select>
+            </div>
+            <label class="toggle toggle-compact" for="includeImagesHelper">
+              <input id="includeImagesHelper" type="checkbox" checked>
+              <span class="toggle-copy">
+                <span class="toggle-title">下载正文图片</span>
+                <span class="toggle-desc">关闭后仅保存文字。</span>
+              </span>
+            </label>
+          </div>
+          <button id="helperDownloadSelected" class="button button-primary" type="button" disabled>下载所选文章</button>
+          <p class="hint">点击标题可打开原文。此处仅下载到本地，不写入 Obsidian。</p>
+        </section>
+        <div id="helperLog" class="log" aria-live="polite"></div>
       </section>
 
       <section id="batchWorkspace" class="panel workspace-panel" hidden>
@@ -142,51 +182,6 @@
         </div>
       </section>
 
-      <section id="wechatWorkspace" class="panel workspace-panel" hidden>
-        <div class="panel-head panel-head-tight">
-          <h2>按日期下载公众号文章</h2>
-          <p class="subtitle-inline">需登录公众号后台，按日期下载同号文章。</p>
-        </div>
-
-        <div id="helperStatus" class="status status-loading" role="status" aria-live="polite" hidden></div>
-
-        <div class="field-group">
-          <label class="field-label" for="helperSeedUrl">该公众号任意一篇文章链接</label>
-          <textarea
-            id="helperSeedUrl"
-            class="text-input text-area text-area-compact"
-            placeholder="https://mp.weixin.qq.com/s/…"
-          ></textarea>
-        </div>
-
-        <div class="field-row">
-          <div class="field-group field-group-tight">
-            <label class="field-label" for="helperStartDate">开始日期</label>
-            <input id="helperStartDate" class="text-input" type="date">
-          </div>
-          <div class="field-group field-group-tight">
-            <label class="field-label" for="helperEndDate">结束日期</label>
-            <input id="helperEndDate" class="text-input" type="date">
-          </div>
-        </div>
-
-        <label class="toggle toggle-compact" for="includeImagesHelper">
-          <input id="includeImagesHelper" type="checkbox" checked>
-          <span class="toggle-copy">
-            <span class="toggle-title">下载正文图片</span>
-            <span class="toggle-desc">关闭后仅保存文字。</span>
-          </span>
-        </label>
-
-        <div class="actions actions-uneven">
-          <button id="helperCheck" class="button" type="button">检查登录状态</button>
-          <button id="openWechatMpLogin" class="button" type="button">打开公众号后台</button>
-          <button id="helperDownload" class="button button-primary" type="button">按范围批量下载</button>
-        </div>
-
-        <div id="helperLog" class="log" aria-live="polite"></div>
-      </section>
-
       <section id="otherWorkspace" class="panel workspace-panel" hidden>
         <div class="panel-head panel-head-tight">
           <h2>其它网页</h2>
@@ -200,7 +195,7 @@
         </div>
       </details>
 
-      <details id="obsidianDock" class="advanced-settings obsidian-dock">
+      <details id="obsidianDock" class="advanced-settings obsidian-dock" hidden>
         <summary class="advanced-summary"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 13h8"/></svg>Obsidian 目录<span id="obsidianSummary" class="obsidian-dock-value">尚未配置</span></summary>
         <div class="advanced-content">
           <p class="hint">选择 Vault 内的文件夹，导出的笔记会直接保存到这里。</p>
@@ -216,6 +211,8 @@
       </details>
     </main>
 
+    <script src="shared/feishu-wiki-clip.js"></script>
+    <script src="shared/recent-save-model.js"></script>
     <script src="shared/export-url-utils.js"></script>
     <script src="shared/export-ui-models.js"></script>
     <script src="shared/obsidian-export.js"></script>

@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "文档本地导出",
+  "name": "网页剪存",
   "description": "将生财有术、公众号、普通网页和飞书文档的正文图片保存到指定飞书知识库，也支持本地导出。",
   "version": "0.4.9",
   "default_locale": "zh_CN",
@@ -35,7 +35,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "文档本地导出",
+    "default_title": "网页剪存",
     "default_popup": "popup.html"
   },
   "content_scripts": [
@@ -52,6 +52,7 @@
       "js": [
         "wechat-markdown-cleanup.js",
         "shared/web-markdown-utils.js",
+        "shared/image-asset.js",
         "content-scripts/feishu-exporter.js"
       ],
       "run_at": "document_idle"

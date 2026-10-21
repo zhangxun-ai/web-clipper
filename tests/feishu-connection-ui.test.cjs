@@ -27,6 +27,7 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
     ...overrides
   };
   const location = new URL(`chrome-extension://abcdefghijklmnopabcdefghijklmnop/feishu-save.html?source=https://my.feishu.cn/docx/Source&requestId=${store.requestId || requestId}${store.job ? "&jobId=" + store.job.id : ""}`);
+  for (const [key, value] of Object.entries(environment.params || {})) location.searchParams.set(key, value);
   const context = {
     document: { getElementById: el, createElement: () => new Element(), visibilityState: "hidden", hasFocus: () => false, addEventListener() {} },
     FeishuWikiClip: clipApi, ConnectorOnboarding: onboarding, URL, URLSearchParams, Map, Set, Option: class { constructor(text, value) { this.text = text; this.value = value; } },
@@ -517,7 +518,7 @@ test("remembered setup leaves only article, destination and one save confirmatio
   assert.equal(p.messages.filter(message => message.action === "start").length, 1);
   assert.equal(p.el("save").disabled, true);
   assert.equal(p.el("jobPanel").hidden, false);
-  assert.match(p.el("jobStatus").textContent, /可以关闭此页.*完成后会通知/);
+  assert.match(p.el("jobStatus").textContent, /可以关闭原网页和此页.*完成后会通知/);
   assert.equal(p.el("resume").hidden, true);
   assert.equal(p.el("endTask").hidden, true);
 });
@@ -728,8 +729,10 @@ test("content and capture failures expose their concrete reason in the main stat
     assert.doesNotMatch(p.el("jobStatus").textContent, /已有内容|进度已保留|暂存文档|已创建/);
     assert.doesNotMatch(p.el("jobStatus").textContent, new RegExp(errorCode));
     assert.match(p.el("jobDetailStatus").textContent, new RegExp(errorCode));
-    assert.equal(p.el("save").textContent, "重新读取并保存");
-    assert.equal(p.el("resume").textContent, "重新读取并保存");
+    const expectedAction = "重新读取并保存";
+    assert.equal(p.el("save").textContent, expectedAction);
+    assert.equal(p.el("resume").textContent, expectedAction);
+    assert.equal(p.el("resume").hidden, false);
     assert.equal(p.el("copyLink").hidden, true);
     assert.equal(p.el("save").disabled, false);
     if (errorCode === "UNSUPPORTED_CONTENT") assert.match(p.el("saveHint").textContent, /需要插件支持/);
@@ -807,4 +810,101 @@ test("permission and connector diagnostics keep their code out of the main statu
     assert.doesNotMatch(p.el("jobStatus").textContent, new RegExp(errorCode));
     assert.match(p.el("jobDetailStatus").textContent, new RegExp(errorCode));
   }
+});
+
+
+test("active saving collapses source controls while preserving a user-opened summary across polls", async () => {
+  const p = await page();
+  const state = { job: { ...uiJob(), stage: "importing", autoRun: true }, running: true };
+  p.context.renderJob(state);
+  assert.equal(p.el("saveForm").open, false);
+  assert.equal(p.el("saveFormSummary").hidden, false);
+  assert.equal(p.el("save").hidden, true);
+  p.el("saveForm").open = true;
+  p.context.renderJob(state);
+  assert.equal(p.el("saveForm").open, true);
+  p.context.renderJob({ job: { ...state.job, stage: "complete", autoRun: false, resultUrl: "https://my.feishu.cn/wiki/Saved" }, running: false });
+  assert.equal(p.el("steps").hidden, true);
+});
+
+test("source can close only after capture and image collection, including retries and queues", async () => {
+  const p = await page();
+  for (const stage of ["ready", "collecting"]) {
+    for (const retryable of [false, true]) {
+      p.context.renderJob({ job: { ...uiJob(), stage, autoRun: true, retryable }, running: true });
+      assert.match(p.el("jobStatus").textContent, /保持原网页打开/);
+      assert.doesNotMatch(p.el("jobStatus").textContent, /关闭原网页/);
+    }
+  }
+  p.context.renderJob({ job: { ...uiJob(), stage: "importing", autoRun: true }, running: true });
+  assert.match(p.el("jobStatus").textContent, /图文已读取.*关闭原网页/);
+});
+
+test("unsupported content explains the boundary and only retries the same request after an explicit action", async () => {
+  const job = { ...uiJob(), stage: "ready", errorCode: "UNSUPPORTED_CONTENT", error: "交互画板暂不支持", autoRun: false };
+  const p = await page({ resume: () => ({ job: { ...job, autoRun: true }, running: true }) });
+  p.context.renderJob({ job, running: false });
+  assert.match(p.el("saveHint").textContent, /原文已调整后重新读取/);
+  assert.equal(p.messages.some(message => ["start", "resume"].includes(message.action)), false);
+  await p.click("save");
+  const requests = p.messages.filter(message => ["start", "resume"].includes(message.action));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].action, "resume");
+  assert.equal(requests[0].jobId, job.id);
+});
+
+
+test("first-time setup is a normal state and unsupported platforms offer local export", async () => {
+  const mac = await page({ status: failure("NATIVE_UNAVAILABLE", "missing") });
+  assert.equal(mac.el("connectionStatus").className, "status status-loading");
+  assert.equal(mac.el("connectionHeading").textContent, "首次连接飞书");
+  const windows = await page({ status: failure("NATIVE_UNAVAILABLE", "missing") }, {}, {
+    navigator: { platform: "Win32", userAgent: "Windows NT 10.0" }, params: { sourceTabId: "42" }
+  });
+  assert.equal(windows.el("saveForm").hidden, true);
+  assert.equal(windows.el("useLocalExport").hidden, false);
+  await windows.click("useLocalExport");
+  const url = new URL(windows.opened[0]);
+  assert.equal(url.pathname, "/popup.html");
+  assert.equal(url.searchParams.get("destination"), "local");
+  assert.equal(url.searchParams.get("sourceTabId"), "42");
+  assert.equal(url.searchParams.get("requestId"), null);
+});
+
+test("popup confirmation starts once after target verification and consumes autoStart before sending", async () => {
+  const store = { target: { url: "https://my.feishu.cn/wiki/Parent" } };
+  const p = await page({ start: message => {
+    store.job = { ...uiJob(message.sourceUrl), stage: "importing", autoRun: true };
+    return { job: store.job, running: true };
+  } }, store, { params: { autoStart: "1", target: store.target.url } });
+  assert.equal(p.messages.filter(message => message.action === "start").length, 1);
+  assert.equal(new URL(p.context.location.href).searchParams.has("autoStart"), false);
+  const reopened = await page({}, store, { params: { autoStart: "1", target: store.target.url } });
+  assert.equal(reopened.messages.some(message => ["start", "resume"].includes(message.action)), false);
+});
+
+test("automatic save never invents a target or bypasses setup or an explicit destination edit", async () => {
+  for (const [store, overrides, params] of [
+    [{}, {}, { autoStart: "1" }],
+    [{ target: { url: "https://my.feishu.cn/wiki/Parent" } }, {}, { autoStart: "1" }],
+    [{ target: { url: "https://my.feishu.cn/wiki/Parent" } }, { status: failure("NATIVE_UNAVAILABLE", "missing") }, { autoStart: "1", target: "https://my.feishu.cn/wiki/Parent" }],
+    [{ target: { url: "https://my.feishu.cn/wiki/Parent" } }, {}, { autoStart: "1", target: "https://my.feishu.cn/wiki/Parent", editTarget: "1" }]
+  ]) {
+    const p = await page(overrides, store, { params });
+    assert.equal(p.messages.some(message => ["start", "resume"].includes(message.action)), false);
+    assert.equal(new URL(p.context.location.href).searchParams.has("autoStart"), false);
+    if (params.editTarget) assert.equal(p.el("destinationSettings").open, true);
+  }
+});
+
+
+test("a lost auto-start response keeps the exact request and cannot leave replay intent in the URL", async () => {
+  const p = await page({ start: () => { throw new Error("响应丢失"); } },
+    { target: { url: "https://my.feishu.cn/wiki/Parent" } }, { params: { autoStart: "1", target: "https://my.feishu.cn/wiki/Parent" } });
+  const start = p.messages.filter(message => message.action === "start");
+  assert.equal(start.length, 1);
+  const url = new URL(p.context.location.href);
+  assert.equal(url.searchParams.get("requestId"), start[0].requestId);
+  assert.equal(url.searchParams.has("autoStart"), false);
+  assert.match(p.el("saveFeedback").textContent, /响应丢失/);
 });

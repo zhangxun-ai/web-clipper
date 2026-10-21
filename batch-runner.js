@@ -163,6 +163,7 @@ async function runLinkBatchJob(job) {
   const usedNames = new Set();
   const exportedEntries = [];
   const failedEntries = [];
+  const outcomes = [];
   const totalCount = getJobTotal(job);
   let successCount = 0;
   let failureCount = 0;
@@ -176,6 +177,7 @@ async function runLinkBatchJob(job) {
     updateStats(completedCount, successCount, failureCount, totalCount);
     setStatus(`正在处理 ${index + 1}/${totalCount} 篇`, "loading");
     appendLog(`开始处理 ${index + 1}/${totalCount}: ${link}`);
+    const outcome = { url: link, result: null, downloaded: false, obsidianWritten: false, errors: {} };
 
     try {
       const rawResult = await exportLinkWithRetry(link, {
@@ -183,11 +185,14 @@ async function runLinkBatchJob(job) {
         includeImages: job.includeImages !== false
       });
       const result = normalizeWechatMarkdownResult(rawResult);
+      outcome.result = result;
 
       if (outputTarget.wantsObsidian) {
         try {
           await writeSingleNoteToObsidian(link, result);
+          outcome.obsidianWritten = true;
         } catch (error) {
+          outcome.errors.obsidian = `Obsidian 写入失败：${error.message || "未知错误"}`;
           appendLog(`写入 Obsidian 失败：${error.message || "未知错误"}`, "error");
         }
       }
@@ -199,6 +204,7 @@ async function runLinkBatchJob(job) {
           url: link,
           filename: entryName
         });
+        outcome.downloaded = true;
         appendLog(`已加入 ZIP: ${entryName}`, "success");
       } else if (outputTarget.wantsDownload) {
         await downloadExportResult(result);
@@ -206,28 +212,20 @@ async function runLinkBatchJob(job) {
           url: link,
           filename: result.filename
         });
+        outcome.downloaded = true;
         appendLog(`已下载: ${result.filename}`, "success");
-      } else {
-        exportedEntries.push({
-          url: link,
-          filename: result.filename
-        });
       }
-
-      successCount += 1;
     } catch (error) {
       if (stopRequested) {
         break;
       }
-      failureCount += 1;
-      failedEntries.push({
-        url: link,
-        message: error.message || "未知错误"
-      });
+      outcome.errors[outcome.result ? "download" : "export"] = error.message || "未知错误";
       appendLog(`失败: ${link} | ${error.message || "未知错误"}`, "error");
     }
 
+    outcomes.push(outcome);
     completedCount += 1;
+    refreshOutcomes();
     if (!stopRequested) {
       await sleep(INTER_TASK_DELAY_MS);
     }
@@ -235,8 +233,8 @@ async function runLinkBatchJob(job) {
 
   setStopTaskActive(false);
 
-  if (zipBuilder && successCount > 0) {
-    setStatus(`正在打包 ZIP，共 ${successCount} 篇。`, "loading");
+  if (zipBuilder && exportedEntries.length > 0) {
+    setStatus(`正在打包 ZIP，共 ${exportedEntries.length} 篇。`, "loading");
     const manifestContent = JSON.stringify(
       {
         title: job.title,
@@ -247,6 +245,10 @@ async function runLinkBatchJob(job) {
         dateRange: job.dateRange || null,
         successCount,
         failureCount,
+        outputTarget: outputTarget.key,
+        localSuccessCount: outcomes.filter((entry) => entry.downloaded).length,
+        obsidianSuccessCount: outcomes.filter((entry) => entry.obsidianWritten).length,
+        obsidianFailureCount: outcomes.filter((entry) => entry.errors.obsidian).length,
         exportedEntries,
         failedEntries,
         createdAt: job.createdAt,
@@ -280,29 +282,66 @@ async function runLinkBatchJob(job) {
         conflictAction: "uniquify"
       });
       appendLog(`ZIP 已生成: ${zipFilename}`, "success");
+    } catch (error) {
+      for (const outcome of outcomes.filter((entry) => entry.downloaded)) {
+        outcome.downloaded = false;
+        outcome.errors.download = `ZIP 下载失败：${error.message || "未知错误"}`;
+      }
+      appendLog(`ZIP 下载失败：${error.message || "未知错误"}`, "error");
     } finally {
       setTimeout(() => URL.revokeObjectURL(zipUrl), 1000);
     }
   }
 
-  updateStats(completedCount, successCount, failureCount, totalCount);
-
+  refreshCompletion();
   if (stopRequested) {
-    const skippedCount = Math.max(0, totalCount - completedCount);
-    setStatus(`任务已停止，成功 ${successCount} 篇，失败 ${failureCount} 篇，未处理 ${skippedCount} 篇。`, "error");
-    appendLog(`任务已停止，未处理 ${skippedCount} 篇。`, "error");
-  } else if (failureCount === 0) {
-    if (outputTarget.key === "both") {
-      setStatus(zipOutput ? `输出完成，已打包 ZIP 并同步 Obsidian，共 ${successCount} 篇。` : `输出完成，已下载并同步 Obsidian，共 ${successCount} 篇。`, "ready");
-    } else if (outputTarget.key === "obsidian") {
-      setStatus(`输出完成，已写入 Obsidian，共 ${successCount} 篇。`, "ready");
-    } else {
-      setStatus(zipOutput ? `下载完成，并已打包 ZIP，共 ${successCount} 篇。` : `下载完成，共 ${successCount} 篇。`, "ready");
+    appendLog(`任务已停止，未处理 ${Math.max(0, totalCount - completedCount)} 篇。`, "error");
+  }
+
+  function refreshOutcomes() {
+    successCount = outcomes.filter((entry) => Object.keys(entry.errors).length === 0).length;
+    failureCount = outcomes.length - successCount;
+    failedEntries.length = 0;
+    for (const outcome of outcomes.filter((entry) => Object.keys(entry.errors).length > 0)) {
+      failedEntries.push({ url: outcome.url, message: Object.values(outcome.errors).join("；") });
     }
-  } else if (successCount > 0) {
-    setStatus(`输出完成，成功 ${successCount} 篇，失败 ${failureCount} 篇。`, "error");
-  } else {
-    setStatus(`输出失败，共 ${failureCount} 篇。`, "error");
+  }
+
+  function refreshCompletion() {
+    refreshOutcomes();
+    updateStats(completedCount, successCount, failureCount, totalCount);
+    const localSuccessCount = outcomes.filter((entry) => entry.downloaded).length;
+    const obsidianSuccessCount = outcomes.filter((entry) => entry.obsidianWritten).length;
+    const obsidianFailures = outcomes.filter((entry) => entry.result && entry.errors.obsidian);
+
+    if (obsidianFailures.length > 0) {
+      // Retain the actual export payloads in this runner; retry never rereads the source.
+      setPendingObsidianRetry({ kind: "link-batch", entries: obsidianFailures, refreshCompletion },
+        `${obsidianFailures.length} 篇 Obsidian 写入失败，正文已保留在当前页面。可重新授权并补写，无需重新采集或下载；关闭本页后需要重新开始。`);
+    } else {
+      setPendingObsidianRetry(null);
+    }
+
+    if (stopRequested) {
+      const skippedCount = Math.max(0, totalCount - completedCount);
+      setStatus(`任务已停止，成功 ${successCount} 篇，失败 ${failureCount} 篇，未处理 ${skippedCount} 篇。`, "error");
+    } else if (failureCount === 0) {
+      if (outputTarget.key === "both") {
+        setStatus(zipOutput ? `输出完成，已打包 ZIP 并同步 Obsidian，共 ${successCount} 篇。` : `输出完成，已下载并同步 Obsidian，共 ${successCount} 篇。`, "ready");
+      } else if (outputTarget.key === "obsidian") {
+        setStatus(`输出完成，已写入 Obsidian，共 ${successCount} 篇。`, "ready");
+      } else {
+        setStatus(zipOutput ? `下载完成，并已打包 ZIP，共 ${successCount} 篇。` : `下载完成，共 ${successCount} 篇。`, "ready");
+      }
+    } else if (outputTarget.key === "both") {
+      setStatus(`输出未全部完成，本地下载成功 ${localSuccessCount} 篇；Obsidian 写入成功 ${obsidianSuccessCount} 篇、失败 ${obsidianFailures.length} 篇；共 ${failureCount} 篇失败。`, "error");
+    } else if (outputTarget.key === "obsidian") {
+      setStatus(`Obsidian 写入未完成，成功 ${obsidianSuccessCount} 篇，失败 ${failureCount} 篇。`, "error");
+    } else if (successCount > 0) {
+      setStatus(`输出完成，成功 ${successCount} 篇，失败 ${failureCount} 篇。`, "error");
+    } else {
+      setStatus(`输出失败，共 ${failureCount} 篇。`, "error");
+    }
   }
 }
 
@@ -993,7 +1032,7 @@ async function exportLinkInBackground(url, options) {
     await sleep(BACKGROUND_TAB_SETTLE_DELAY_MS);
 
     const payload = await sendMessageWithRecovery(tabId, {
-      type: "feishu-export:export-document",
+      type: "feishu-export:export-document-v2",
       format: options.format,
       options: {
         includeImages: options.includeImages,
@@ -1015,7 +1054,7 @@ async function exportLinkInBackground(url, options) {
 async function exportLinkInExistingTab(tabId, url, options) {
   await prepareTabForUrl(tabId, url, { settleDelayMs: options?.settleDelayMs });
   const payload = await sendMessageWithRecovery(tabId, {
-    type: "feishu-export:export-document",
+    type: "feishu-export:export-document-v2",
     format: options.format,
     options: {
       includeImages: options.includeImages,
@@ -1156,6 +1195,10 @@ function sendMessageToTab(tabId, message) {
 }
 
 async function sendMessageWithRecovery(tabId, message) {
+  if (message.type === "feishu-export:export-document-v2") {
+    await injectContentScript(tabId);
+    return sendMessageToTab(tabId, message);
+  }
   try {
     return await sendMessageToTab(tabId, message);
   } catch (error) {
@@ -1173,7 +1216,7 @@ function injectContentScript(tabId) {
     chrome.scripting.executeScript(
       {
         target: { tabId },
-        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "content-scripts/feishu-exporter.js"]
+        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "shared/image-asset.js", "content-scripts/feishu-exporter.js"]
       },
       () => {
         if (chrome.runtime.lastError) {
@@ -1414,7 +1457,10 @@ async function writeSingleNoteToObsidian(sourceUrl, result) {
     exportedAt: new Date().toISOString(),
     markdown: extractDocumentBodyMarkdown(result?.content)
   });
-  await obsidianVaultStorage.writeTextFiles?.(binding.handle, [note]);
+  if (typeof obsidianVaultStorage.writeTextFiles !== "function") {
+    throw new Error("Obsidian 写入模块未加载");
+  }
+  await obsidianVaultStorage.writeTextFiles(binding.handle, [note]);
   appendLog(`已写入 Obsidian：${note.path}`, "success");
 }
 
@@ -1620,6 +1666,23 @@ async function handleRetryObsidianWrite() {
     }
 
     switch (retryState.kind) {
+      case "link-batch": {
+        let restoredCount = 0;
+        for (const entry of retryState.entries) {
+          try {
+            await writeSingleNoteToObsidian(entry.url, entry.result);
+            entry.obsidianWritten = true;
+            delete entry.errors.obsidian;
+            restoredCount += 1;
+          } catch (error) {
+            entry.errors.obsidian = `Obsidian 写入失败：${error.message || "未知错误"}`;
+            appendLog(`Obsidian 重试失败：${entry.url} | ${error.message || "未知错误"}`, "error");
+          }
+        }
+        retryState.refreshCompletion();
+        appendLog(`Obsidian 补写成功 ${restoredCount} 篇，剩余 ${pendingObsidianRetry?.entries?.length || 0} 篇写入失败。`, pendingObsidianRetry ? "error" : "success");
+        return;
+      }
       case "course-bundle":
         await writeCourseBundleToObsidianWithBinding(retryState.payload, binding);
         break;

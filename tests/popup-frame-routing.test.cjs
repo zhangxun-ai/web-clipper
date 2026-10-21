@@ -60,9 +60,18 @@ function loadFrameRoutingHelpers(chrome, extras = {}) {
   await helpers.injectContentScript(42, 9);
   assert.deepEqual(JSON.parse(JSON.stringify(injections[0].target)), { tabId: 42, frameIds: [9] });
 
+  // Older tabs have a listener but do not recognize export-document-v2. The
+  // upgrade must happen before sending, without waiting for a missing receiver.
+  const upgraded = await helpers.sendMessageWithRecovery({ tabId: 42, frameId: 9,
+    message: { type: "feishu-export:export-document-v2", format: "markdown" } });
+  assert.deepEqual(upgraded, { title: "课程章节" });
+  assert.equal(injections.length, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(injections[1].target)), { tabId: 42, frameIds: [9] });
+  assert(injections[1].files.includes("shared/image-asset.js"));
+
   await helpers.inspectFrameUrls(42);
-  assert.deepEqual(JSON.parse(JSON.stringify(injections[1].target)), { tabId: 42, allFrames: true });
-  assert.equal(typeof injections[1].func, "function");
+  assert.deepEqual(JSON.parse(JSON.stringify(injections[2].target)), { tabId: 42, allFrames: true });
+  assert.equal(typeof injections[2].func, "function");
 
   {
     const recoveryMessages = [];

@@ -2,7 +2,6 @@ const BACKGROUND_TAB_SETTLE_DELAY_MS = 1500;
 const DEFAULT_HISTORY_RANGE_DAYS = 30;
 const DOWNLOAD_STATUS_TIMEOUT_MS = 60 * 1000;
 const SCYS_EMBEDDED_FRAME_TIMEOUT_MS = 15 * 1000;
-const WECHAT_MP_LOGIN_URL = "https://mp.weixin.qq.com/";
 const exportUrlUtils = globalThis.ExportUrlUtils || {};
 const exportUiModels = globalThis.ExportUiModels || {};
 const obsidianExportApi = globalThis.ObsidianExport || {};
@@ -25,10 +24,6 @@ const isScysPageUrl = (url) => {
 const buildObsidianNoteFile = (payload) => obsidianExportApi.buildObsidianNoteFile?.(payload);
 const getPopupCategories = () => exportUiModels.getPopupCategories?.() || [];
 const resolvePopupCategory = (value) => exportUiModels.resolvePopupCategory?.(value) || "other";
-const resolvePopupPresetState = (value) => exportUiModels.resolvePopupPresetState?.(value) || {
-  key: "custom",
-  label: "自定义组合"
-};
 const normalizeOutputTarget = (value, fallback) => exportUiModels.normalizeOutputTarget?.(value, fallback) || "download";
 const getOutputTargetState = (value) => exportUiModels.getOutputTargetState?.(value) || {
   key: "download",
@@ -68,7 +63,6 @@ const wechatWorkspaceEl = document.getElementById("wechatWorkspace");
 const otherWorkspaceEl = document.getElementById("otherWorkspace");
 const otherWorkspaceNoteEl = document.getElementById("otherWorkspaceNote");
 const includeImagesInput = document.getElementById("includeImages");
-const presetSummaryEl = document.getElementById("presetSummary");
 const outputTargetDownloadInput = document.getElementById("outputTargetDownload");
 const outputTargetBothInput = document.getElementById("outputTargetBoth");
 const outputTargetObsidianInput = document.getElementById("outputTargetObsidian");
@@ -90,11 +84,30 @@ const helperSeedUrlInput = document.getElementById("helperSeedUrl");
 const helperStartDateInput = document.getElementById("helperStartDate");
 const helperEndDateInput = document.getElementById("helperEndDate");
 const helperCheckButton = document.getElementById("helperCheck");
-const openWechatMpLoginButton = document.getElementById("openWechatMpLogin");
 const helperDownloadButton = document.getElementById("helperDownload");
+const helperRefreshButton = document.getElementById("helperRefresh");
+const helperResultsEl = document.getElementById("helperArticleResults");
+const helperArticleSummaryEl = document.getElementById("helperArticleSummary");
+const helperListNoticeEl = document.getElementById("helperListNotice");
+const helperArticleListEl = document.getElementById("helperArticleList");
+const helperArticleEmptyEl = document.getElementById("helperArticleEmpty");
+const helperSelectionSummaryEl = document.getElementById("helperSelectionSummary");
+const helperSelectAllButton = document.getElementById("helperSelectAll");
+const helperSelectNoneButton = document.getElementById("helperSelectNone");
+const helperDownloadSelectedButton = document.getElementById("helperDownloadSelected");
+const helperOutputFormatInput = document.getElementById("helperOutputFormat");
 const helperLogEl = document.getElementById("helperLog");
 const openFeishuSaveButton = document.getElementById("openFeishuSave");
-const presetButtons = Array.from(document.querySelectorAll(".preset-card[data-preset]"));
+const destinationButtons = Array.from(document.querySelectorAll("[data-destination]"));
+const destinationValue = document.getElementById("destinationValue");
+const connectionIndicator = document.getElementById("destinationConnection");
+const popupRoute = new URL(location.href).searchParams;
+const recentSaveModel = globalThis.RecentSaveModel;
+let destination = "feishu";
+let feishuOverview = { jobs: [], target: null, connection: { state: "checking" } };
+let recentLimit = 6;
+let openingSave = false;
+let obsidianSettingsRequested = false;
 const categoryTabButtons = new Map(
   getPopupCategories().map((item) => [
     item.key,
@@ -103,8 +116,14 @@ const categoryTabButtons = new Map(
 );
 
 let activeTabId = null;
+let activeTabUrl = "";
 let pageInfo = null;
 let isWechatHistoryRunning = false;
+let isWechatSelectionDownloading = false;
+let wechatHistoryView = null;
+let wechatHistorySelection = null;
+let wechatProgressTimer = 0;
+let wechatQueryStartedAt = 0;
 let obsidianBinding = null;
 let outputTarget = "download";
 let currentExportType = "unsupported";
@@ -131,16 +150,61 @@ secondaryActionButton.addEventListener("click", handleSecondaryAction);
 scysExportCourseButton.addEventListener("click", handleCourseExport);
 scysExportCurrentButton.addEventListener("click", () => handleExport("markdown"));
 batchDownloadLinksButton.addEventListener("click", handleBatchDownloadLinks);
-helperCheckButton.addEventListener("click", () => refreshWechatMpStatus({ silent: false }));
-openWechatMpLoginButton.addEventListener("click", handleOpenWechatMpLogin);
-helperDownloadButton.addEventListener("click", handleWechatHistoryDownload);
-includeImagesInput.addEventListener("change", () => syncIncludeImages(true));
-includeImagesHelperInput.addEventListener("change", () => syncIncludeImages(false));
+helperCheckButton.addEventListener("click", () => refreshWechatHistoryStatus({ silent: false }).catch(() => {}));
+helperDownloadButton.addEventListener("click", () => handleWechatHistoryList());
+helperRefreshButton.addEventListener("click", () => handleWechatHistoryList({ refresh: true }));
+helperDownloadSelectedButton.addEventListener("click", handleWechatSelectedDownload);
+helperSelectAllButton.addEventListener("click", () => selectWechatArticles(true));
+helperSelectNoneButton.addEventListener("click", () => selectWechatArticles(false));
+for (const input of [helperSeedUrlInput, helperStartDateInput, helperEndDateInput]) {
+  input.addEventListener("input", () => {
+    if (!matchesWechatRange(wechatHistoryView)) {
+      wechatHistoryView = null; helperStatusEl.hidden = true;
+      renderWechatArticles(); setHistoryControlsDisabled(isWechatHistoryRunning || isWechatSelectionDownloading);
+    }
+  });
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local") return;
+  const selection = changes.wechatHistorySelection?.newValue;
+  if (selection) wechatHistorySelection = selection;
+  const view = changes.wechatHistoryView?.newValue;
+  if (view && matchesWechatRange(view)) {
+    applyWechatHistoryView(view);
+  } else if (selection && selection.listId === wechatHistoryView?.listId) {
+    wechatHistoryView = { ...wechatHistoryView, selectedUrls: selection.urls };
+    renderWechatArticles();
+  }
+});
+includeImagesInput.addEventListener("change", () => { syncIncludeImages(true); storageSet({ includeImages: includeImagesInput.checked }); });
+includeImagesHelperInput.addEventListener("change", () => { syncIncludeImages(false); storageSet({ includeImages: includeImagesInput.checked }); });
 outputTargetInputs.forEach((input) => input.addEventListener("change", handleOutputTargetChange));
 pickObsidianFolderButton.addEventListener("click", handlePickObsidianFolder);
 clearObsidianFolderButton.addEventListener("click", handleClearObsidianFolder);
-presetButtons.forEach((button) => {
-  button.addEventListener("click", () => handlePresetSelection(button.dataset.preset || ""));
+destinationButtons.forEach(button => {
+  button.addEventListener("click", () => selectDestination(button.dataset.destination));
+  button.addEventListener("keydown", event => {
+    const index = destinationButtons.indexOf(button);
+    const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (!offset) return;
+    event.preventDefault();
+    const next = destinationButtons[(index + offset + destinationButtons.length) % destinationButtons.length];
+    next.focus();
+    selectDestination(next.dataset.destination);
+  });
+});
+document.getElementById("changeDestination").addEventListener("click", () => {
+  if (destination === "feishu") return openSavePage({ editTarget: true });
+  focusObsidianSettings();
+});
+document.getElementById("moreRecentSaves").addEventListener("click", () => {
+  recentLimit += 12;
+  renderRecentSaves();
+});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && recentSaveModel.storageKeys.some(key => key in changes)) {
+    loadCachedOverview().catch(() => {});
+  }
 });
 categoryTabButtons.forEach((button, key) => {
   button?.addEventListener("click", () => setActiveCategory(key));
@@ -158,27 +222,44 @@ categoryTabButtons.forEach((button, key) => {
     tabs[next][1].focus();
   });
 });
-document.getElementById("openExportSettings")?.addEventListener("click", (event) => {
-  event.preventDefault();
-  focusElement(document.querySelector("#popupAdvancedSettings > summary"));
+document.getElementById("openExportSettings")?.addEventListener("click", () => {
+  const settings = document.getElementById("popupAdvancedSettings");
+  settings.hidden = !settings.hidden;
+  settings.open = !settings.hidden;
+  document.getElementById("openExportSettings").setAttribute("aria-expanded", String(!settings.hidden));
+  if (!settings.hidden) focusElement(settings.querySelector("summary"));
 });
-openFeishuSaveButton?.addEventListener("click", async () => {
+openFeishuSaveButton.addEventListener("click", () => openSavePage({ autoStart: true }));
+
+async function openSavePage({ autoStart = false, editTarget = false } = {}) {
+  if (openingSave) return;
+  const confirmedTargetUrl = feishuOverview.target?.url || "";
+  openingSave = true;
+  renderPrimarySurface();
   try {
     const [tab] = await queryActiveTab();
     if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) throw new Error("请先打开要保存的文章网页。");
-    await injectContentScript(tab.id);
     const url = new URL(chrome.runtime.getURL("feishu-save.html"));
     url.searchParams.set("source", tab.url);
     url.searchParams.set("sourceTabId", String(tab.id));
     url.searchParams.set("requestId", crypto.randomUUID());
+    if (confirmedTargetUrl) url.searchParams.set("target", confirmedTargetUrl);
+    if (autoStart && confirmedTargetUrl) url.searchParams.set("autoStart", "1");
+    if (editTarget) url.searchParams.set("editTarget", "1");
     await chrome.tabs.create({ url: url.href });
-  } catch (error) { setStatus(error.message || "无法打开飞书剪存页。", "error"); }
-});
+  } catch (error) {
+    setStatus(error.message || "无法打开飞书剪存页。", "error");
+  } finally {
+    openingSave = false;
+    renderPrimarySurface();
+  }
+}
 
 async function init() {
   initializeHistoryDateRange();
   syncIncludeImages(true);
-  await loadPopupPreferences();
+  await Promise.all([loadPopupPreferences(), loadCachedOverview()]);
+  loadFeishuOverview();
   applyOutputTargetToInputs();
   await refreshObsidianBinding({ silent: true });
 
@@ -188,6 +269,7 @@ async function init() {
   }
 
   activeTabId = tab.id;
+  activeTabUrl = tab.url || "";
   if (openFeishuSaveButton) openFeishuSaveButton.disabled = !/^https?:\/\//i.test(tab.url || "");
   currentExportType = classifyExportUrl(tab.url || "");
   detectedCategory = resolvePopupCategory({
@@ -201,6 +283,14 @@ async function init() {
 
   if (tab.url && isWechatArticleUrl(tab.url)) {
     helperSeedUrlInput.value = tab.url;
+  }
+  const savedRange = (await storageGet(["wechatHistoryInput"])).wechatHistoryInput;
+  if (savedRange && (!helperSeedUrlInput.value || helperSeedUrlInput.value === savedRange.seedUrl)
+    && isWechatArticleUrl(savedRange.seedUrl) && /^\d{4}-\d{2}-\d{2}$/.test(savedRange.startDate || "")
+    && /^\d{4}-\d{2}-\d{2}$/.test(savedRange.endDate || "")) {
+    helperSeedUrlInput.value = savedRange.seedUrl;
+    helperStartDateInput.value = savedRange.startDate;
+    helperEndDateInput.value = savedRange.endDate;
   }
 
   if (tab.url && isWechatMpBackendUrl(tab.url)) {
@@ -240,9 +330,17 @@ async function init() {
   }
 
   if (isWechatArticleUrl(helperSeedUrlInput.value.trim())) {
-    await refreshWechatMpStatus({ silent: true }).catch(() => null);
+    await refreshWechatHistoryStatus({ silent: true }).catch(() => null);
   } else {
     helperStatusEl.hidden = true;
+  }
+
+  const savedHistory = await storageGet(["wechatHistoryView", "wechatHistorySelection"]);
+  const previousView = savedHistory.wechatHistoryView;
+  wechatHistorySelection = savedHistory.wechatHistorySelection || null;
+  if (matchesWechatRange(previousView)) {
+    applyWechatHistoryView(previousView);
+    if (previousView.state === "loading") setHelperStatus("查询进度已保留，可先查看已有文章；点击“继续获取”可接续查询。", "loading");
   }
 
   renderPrimarySurface();
@@ -257,7 +355,7 @@ async function handleExport(format) {
 
   const shouldDownload = wantsDownload();
   const shouldSaveToObsidian = format === "markdown" && wantsObsidian();
-  const shouldDownloadSelfContainedMarkdown = shouldDownload && !shouldSaveToObsidian && format === "markdown";
+  const shouldDownloadMarkdown = shouldDownload && format === "markdown";
 
   if (format === "markdown" && wantsObsidian()) {
     const vaultReady = await ensureObsidianReadyIfNeeded();
@@ -272,11 +370,11 @@ async function handleExport(format) {
 
   try {
     const payload = await sendMessageToActivePage({
-      type: "feishu-export:export-document",
+      type: "feishu-export:export-document-v2",
       format,
       options: {
         includeImages: includeImagesInput.checked,
-        localImageAssets: (shouldDownloadSelfContainedMarkdown || shouldSaveToObsidian) && includeImagesInput.checked
+        localImageAssets: (shouldDownloadMarkdown || shouldSaveToObsidian) && includeImagesInput.checked
       }
     });
     throwIfExportCanceled();
@@ -288,24 +386,11 @@ async function handleExport(format) {
     let downloadStarted = false;
 
     if (shouldDownload) {
-      if (shouldDownloadSelfContainedMarkdown) {
-        setStatus(
-          includeImagesInput.checked
-            ? `正在生成带图 Markdown：${filename}。`
-            : `正在生成小体积 Markdown：${filename}。`,
-          "loading"
-        );
-        const downloadOutcome = await downloadSelfContainedMarkdownPayload(normalizedPayload, filename);
-        throwIfExportCanceled();
-        downloadedFilename = downloadOutcome?.filename || filename;
-        downloadStarted = downloadOutcome?.started === true;
-      } else {
-        setStatus(`正在写入下载文件：${filename}，可点击“停止导出”取消。`, "loading");
-        const downloadOutcome = await downloadExportPayload(normalizedPayload, filename, format);
-        throwIfExportCanceled();
-        downloadedFilename = downloadOutcome?.filename || filename;
-        downloadStarted = downloadOutcome?.started === true;
-      }
+      setStatus(`正在保存 ${format.toUpperCase()}${normalizedPayload.assets?.length ? " 与图片附件" : ""}：${filename}。`, "loading");
+      const downloadOutcome = await downloadExportPayload(normalizedPayload, filename, format);
+      throwIfExportCanceled();
+      downloadedFilename = downloadOutcome?.filename || filename;
+      downloadStarted = downloadOutcome?.started === true;
     }
 
     let obsidianMessage = "";
@@ -415,164 +500,199 @@ async function handleCourseExport() {
   }
 }
 
-async function handleWechatHistoryDownload() {
-  if (isWechatHistoryRunning) {
-    setHelperStatus("当前还有进行中的批量任务，请等待完成后再试。", "error");
-    return;
-  }
+function hasWechatArticlesView(view = wechatHistoryView) {
+  return Boolean(view?.listId && Array.isArray(view.articles) && matchesWechatRange(view));
+}
 
-  if (wantsObsidian()) {
-    const vaultReady = await ensureObsidianReadyIfNeeded();
-    if (!vaultReady) {
-      return;
-    }
+function applyWechatHistoryView(view) {
+  // Legacy saved views have no listId; two missing IDs must not match.
+  const selection = view.listId && wechatHistorySelection?.listId === view.listId ? wechatHistorySelection.urls : view.selectedUrls;
+  wechatHistoryView = { ...view, selectedUrls: Array.isArray(selection) ? selection : [] };
+  renderWechatArticles();
+  if (!isWechatHistoryRunning && !isWechatSelectionDownloading) setHistoryControlsDisabled(false);
+  if (!isWechatSelectionDownloading) renderWechatHistoryStatus();
+  if (view.state !== "loading" && wechatProgressTimer) {
+    clearInterval(wechatProgressTimer); wechatProgressTimer = 0;
   }
+}
 
+function renderWechatHistoryStatus() {
+  const view = wechatHistoryView;
+  if (!view || !matchesWechatRange(view) || isWechatSelectionDownloading) return;
+  const pages = Number(view.pageCount) || 0, scanned = Number(view.scannedCount) || 0;
+  const count = view.articles?.length || 0;
+  if (view.state === "error") {
+    const details = view.errorDetails || view.details || {};
+    const httpStatus = details.httpStatus || view.httpStatus || /^TIKHUB_HTTP_(\d+)$/.exec(view.errorCode || "")?.[1];
+    const diagnostics = [httpStatus ? `HTTP ${httpStatus}` : "", Number.isFinite(details.elapsedMs) ? `本次请求 ${(details.elapsedMs / 1000).toFixed(1)} 秒` : ""].filter(Boolean).join("，");
+    const prefix = diagnostics ? `${diagnostics}。` : "";
+    setHelperStatus(`${prefix}${view.error || "获取未完成。"} 已读取 ${pages} 页、${scanned} 篇；${count ? `保留 ${count} 篇可查看文章，可先下载所选或继续获取。` : "进度已保留，可继续获取。"}`, "error");
+  } else if (view.state === "loading") {
+    const elapsed = wechatQueryStartedAt ? `，已用 ${Math.floor((Date.now() - wechatQueryStartedAt) / 1000)} 秒` : "";
+    setHelperStatus(pages || scanned
+      ? `正在${view.refreshing ? "刷新" : "获取"}第 ${pages + 1} 页，已读取 ${scanned} 篇${elapsed}。已有文章可先查看和下载。`
+      : `正在识别公众号并获取首批文章${elapsed}…`, "loading");
+  } else {
+    setHelperStatus(`${view.cached ? "已从本地历史筛选" : "历史列表已收集完成"}，${count} 篇可查看。${view.cached ? "需要最新内容可刷新账号历史。" : "可勾选后下载。"}`, "ready");
+  }
+}
+
+async function handleWechatHistoryList({ refresh = false } = {}) {
+  if (isWechatHistoryRunning || isWechatSelectionDownloading) return;
   const seedUrl = String(helperSeedUrlInput.value || "").trim();
   const startDate = String(helperStartDateInput.value || "").trim();
   const endDate = String(helperEndDateInput.value || "").trim();
+  if (!isWechatArticleUrl(seedUrl)) { setHelperStatus("请粘贴该公众号任意一篇文章的链接。", "error"); return; }
+  if (!startDate || !endDate) { setHelperStatus("请选择开始和结束日期。", "error"); return; }
+  if (startDate > endDate) { setHelperStatus("开始日期不能晚于结束日期。", "error"); return; }
 
-  if (!isWechatArticleUrl(seedUrl)) {
-    setHelperStatus("请粘贴该公众号任意一篇文章的链接。", "error");
-    return;
-  }
-
-  if (!startDate || !endDate) {
-    setHelperStatus("请选择开始和结束日期。", "error");
-    return;
-  }
-
-  if (startDate > endDate) {
-    setHelperStatus("开始日期不能晚于结束日期。", "error");
-    return;
-  }
-
-  isWechatHistoryRunning = true;
-  setHistoryControlsDisabled(true);
+  const resume = !refresh && ["error", "loading"].includes(wechatHistoryView?.state) && wechatHistoryView?.refreshing === true;
+  isWechatHistoryRunning = true; wechatQueryStartedAt = Date.now();
   clearHelperLog();
-  setHelperStatus("正在查找历史文章…", "loading");
-
+  const previous = matchesWechatRange(wechatHistoryView) ? wechatHistoryView : {};
+  wechatHistoryView = { ...previous, seedUrl, startDate, endDate, state: "loading", refreshing: refresh || resume,
+    articles: previous.articles || [], selectedUrls: previous.selectedUrls || [] };
+  renderWechatArticles(); setHistoryControlsDisabled(true); renderWechatHistoryStatus();
+  clearInterval(wechatProgressTimer);
+  wechatProgressTimer = setInterval(() => renderWechatHistoryStatus(), 1000);
   try {
-    const result = await resolveWechatHistoryInBackground(seedUrl, startDate, endDate);
-
-    for (const line of result.logs || []) {
-      appendHelperLog(line);
-    }
-
-    if (result.loginRequired) {
-      await openForegroundTab(WECHAT_MP_LOGIN_URL);
-      setHelperStatus("未检测到当前 Chrome 的公众号后台登录态。已为你打开登录页，登录完成后回来重试。", "error");
-      appendHelperLog("未检测到后台登录态，已自动打开 `mp.weixin.qq.com` 登录页。", "error");
-      return;
-    }
-
-    const links = normalizeSupportedLinks(result.links || []);
-    if (links.length === 0) {
-      setHelperStatus(result.message || "该时间范围没有命中任何历史文章。", "ready");
-      appendHelperLog(result.message || "后台没有返回可下载文章。");
-      return;
-    }
-
-    batchLinksInput.value = links.join("\n");
-    appendHelperLog(
-      `已匹配公众号: ${formatWechatAccountLabel(result.matchedAccount)}，命中 ${links.length} 篇。`,
-      "success"
-    );
-    setHelperStatus(`已找到 ${links.length} 篇历史文章，开始自动下载。`, "loading");
-
-    const job = await createStoredBatchJob(links, {
-      includeImages: includeImagesInput.checked,
-      zipOutput: batchZipOutputInput.checked,
-      outputTarget,
-      title: `公众号历史下载 - ${formatWechatAccountLabel(result.matchedAccount)}`,
-      source: "wechat-history",
-      account: result.matchedAccount || null,
-      dateRange: { startDate, endDate }
-    });
-    await openBatchRunner(job.id);
-    setHelperStatus(`已打开任务页，共 ${links.length} 篇。后续下载会在任务页继续执行。`, "ready");
-    appendHelperLog(`已创建历史下载任务，共 ${links.length} 篇。`, "success");
+    const result = await callWechatHistoryService("list", { seedUrl, startDate, endDate, ...(refresh ? { refresh: true } : {}), ...(resume ? { resume: true } : {}) });
+    for (const line of result.logs || []) appendHelperLog(line);
+    applyWechatHistoryView({ ...wechatHistoryView, ...result, state: result.complete ? "ready" : "loading", refreshing: false });
   } catch (error) {
-    setHelperStatus(error.message || "公众号历史下载失败", "error");
-    appendHelperLog(error.message || "公众号历史下载失败", "error");
+    // Storage can contain newer partial results than the original message callback.
+    const saved = (await storageGet(["wechatHistoryView"]).catch(() => ({}))).wechatHistoryView;
+    if (matchesWechatRange(saved)) wechatHistoryView = saved;
+    applyWechatHistoryView({ ...wechatHistoryView, state: "error", error: error.message || "公众号文章查询失败", errorCode: error.code,
+      errorDetails: error.details || wechatHistoryView?.errorDetails });
+    appendHelperLog(error.message || "公众号文章查询失败", "error");
   } finally {
-    isWechatHistoryRunning = false;
-    setHistoryControlsDisabled(false);
+    clearInterval(wechatProgressTimer); wechatProgressTimer = 0;
+    isWechatHistoryRunning = false; setHistoryControlsDisabled(isWechatSelectionDownloading);
   }
 }
 
-async function handleOpenWechatMpLogin() {
-  await openForegroundTab(WECHAT_MP_LOGIN_URL);
-  setHelperStatus("已打开公众号后台登录页。登录完成后回到这里继续。", "ready");
-  appendHelperLog("已打开 `mp.weixin.qq.com` 登录页。完成一次登录后，再执行“按范围批量下载”。", "success");
+function matchesWechatRange(view) {
+  return Boolean(view && view.seedUrl === helperSeedUrlInput.value.trim()
+    && view.startDate === helperStartDateInput.value && view.endDate === helperEndDateInput.value);
 }
 
-async function refreshWechatMpStatus({ silent = false } = {}) {
-  const seedUrl = String(helperSeedUrlInput.value || "").trim();
-  if (!isWechatArticleUrl(seedUrl)) {
-    const message = "请先粘贴一篇公众号文章链接。";
-    setHelperStatus(message, "loading");
-    helperStatusEl.hidden = silent;
-    if (!silent) {
-      appendHelperLog(message);
-    }
-    return null;
-  }
+function selectedWechatUrls() {
+  const selected = new Set(wechatHistoryView?.selectedUrls || []);
+  return (wechatHistoryView?.articles || []).filter(article => selected.has(article.url)).map(article => article.url);
+}
 
+function updateWechatSelectionControls() {
+  const total = hasWechatArticlesView() ? wechatHistoryView.articles.length : 0;
+  const count = selectedWechatUrls().length;
+  helperSelectionSummaryEl.textContent = `已选 ${count} / ${total} 篇`;
+  helperDownloadSelectedButton.textContent = isWechatSelectionDownloading ? "正在核验并创建下载…" : count ? `下载所选 ${count} 篇` : "勾选文章后下载";
+  helperDownloadSelectedButton.disabled = isWechatSelectionDownloading || !count || !hasWechatArticlesView();
+  helperSelectAllButton.disabled = isWechatSelectionDownloading || !total;
+  helperSelectNoneButton.disabled = isWechatSelectionDownloading || !count;
+  for (const checkbox of helperArticleListEl.querySelectorAll("input[type=checkbox]")) checkbox.disabled = isWechatSelectionDownloading;
+  helperRefreshButton.hidden = !hasWechatArticlesView();
+  helperRefreshButton.disabled = isWechatHistoryRunning || isWechatSelectionDownloading;
+}
+
+function persistWechatSelection(urls) {
+  wechatHistoryView = { ...wechatHistoryView, selectedUrls: urls };
+  wechatHistorySelection = { listId: wechatHistoryView.listId, urls };
+  // Selection has its own key so a click cannot overwrite a newer background page.
+  storageSet({ wechatHistorySelection }).catch(() => setHelperStatus("文章选择未能保存，请保持弹窗打开后下载。", "error"));
+}
+
+function renderWechatArticles() {
+  const visible = hasWechatArticlesView();
+  helperResultsEl.hidden = !visible;
+  const activeLabel = helperArticleListEl.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
+  helperArticleListEl.replaceChildren();
+  if (!visible) { updateWechatSelectionControls(); return; }
+  const view = wechatHistoryView;
+  const uncertain = view.articles.filter(article => !article.publishDate || article.candidateDate || article.publicationSource === "message" && !article.dateVerified).length;
+  helperArticleSummaryEl.textContent = `${formatWechatAccountLabel(view.matchedAccount)} · ${view.startDate} ～ ${view.endDate} · ${view.articles.length} 篇${uncertain ? `（${uncertain} 篇日期待核验）` : ""}`;
+  const collected = view.lastCompleteAt || view.queriedAt;
+  const collectedDate = collected ? new Date(collected) : null;
+  const collectedText = collectedDate && Number.isFinite(collectedDate.getTime()) ? `历史采集于 ${collectedDate.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}。` : "";
+  helperListNoticeEl.textContent = view.refreshing
+    ? `${collectedText}保留上次历史，并陆续补入本次取得的文章；刷新尚未完成。`
+    : view.complete
+    ? `${collectedText}${view.refreshing ? "当前显示上次完整历史，正在补充新内容。" : "已读取供应商全部历史页；下载前核验所选文章日期。"}`
+    : "历史尚未收集完，已有文章可先查看和下载；日期将在下载前核验。";
+  helperArticleEmptyEl.hidden = view.articles.length > 0;
+  helperArticleEmptyEl.textContent = view.complete ? "已有历史在此日期范围内没有文章，可调整日期或刷新账号历史。" : "暂未找到此范围的文章，历史尚未收集完，可继续获取。";
+  const selected = new Set(view.selectedUrls || []);
+  for (const article of view.articles) {
+    const row = document.createElement("li"); row.className = "history-article";
+    const label = document.createElement("label"); label.className = "history-article-check";
+    const checkbox = document.createElement("input"); checkbox.type = "checkbox";
+    checkbox.checked = selected.has(article.url);
+    checkbox.setAttribute("aria-label", `选择 ${article.title}`);
+    checkbox.addEventListener("change", () => {
+      const urls = new Set(wechatHistoryView.selectedUrls || []);
+      if (checkbox.checked) urls.add(article.url); else urls.delete(article.url);
+      persistWechatSelection([...urls]); updateWechatSelectionControls();
+    });
+    label.append(checkbox);
+    const copy = document.createElement("div"); copy.className = "history-article-copy";
+    const link = document.createElement("a"); link.className = "history-article-link";
+    link.textContent = article.title || "未命名文章"; link.href = article.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+    const date = document.createElement("time"); date.className = "history-article-date";
+    if (article.publishDate) date.dateTime = article.publishDate;
+    date.textContent = article.publishDate ? `${article.publishDate}${article.candidateDate || article.publicationSource === "message" && !article.dateVerified ? "（待核验）" : ""}` : "发表日期待核验";
+    copy.append(link, date); row.append(label, copy); helperArticleListEl.append(row);
+  }
+  updateWechatSelectionControls();
+  if (activeLabel) for (const checkbox of helperArticleListEl.querySelectorAll("input[type=checkbox]")) {
+    if (checkbox.getAttribute("aria-label") === activeLabel) { checkbox.focus({ preventScroll: true }); break; }
+  }
+}
+
+function selectWechatArticles(all) {
+  if (!hasWechatArticlesView() || isWechatSelectionDownloading) return;
+  persistWechatSelection(all ? wechatHistoryView.articles.map(article => article.url) : []);
+  renderWechatArticles();
+}
+
+async function handleWechatSelectedDownload() {
+  if (isWechatSelectionDownloading || !hasWechatArticlesView()) return;
+  const articleUrls = selectedWechatUrls();
+  if (!articleUrls.length) { setHelperStatus("请先勾选要下载的文章。", "error"); return; }
+  const request = { listId: wechatHistoryView.listId, articleUrls,
+    options: { includeImages: includeImagesHelperInput.checked, zipOutput: helperOutputFormatInput.value === "zip", outputTarget: "download" } };
+  isWechatSelectionDownloading = true; setHistoryControlsDisabled(true);
+  setHelperStatus(`正在核验所选 ${articleUrls.length} 篇文章并创建本地下载任务…`, "loading");
   try {
-    const payload = await checkWechatMpLoginFromSeed(seedUrl);
-    if (payload.loggedIn) {
-      const accountName = payload.accountName ? `，账号 ${payload.accountName}` : "";
-      setHelperStatus(`已登录${accountName}。`, "ready");
-      if (!silent) {
-        appendHelperLog(`已检测到公众号后台登录态${accountName}。`, "success");
-      }
-    } else {
-      setHelperStatus("尚未登录，请点击“打开公众号后台”完成登录。", "error");
-      if (!silent) {
-        appendHelperLog("当前 Chrome 里没有可用的 `mp.weixin.qq.com` 登录态。", "error");
-      }
-    }
+    const result = await callWechatHistoryService("download-selected", request);
+    const format = request.options.zipOutput ? "ZIP" : "Markdown";
+    setHelperStatus(`已打开本地 ${format} 下载任务，共 ${result.links.length} 篇。`, "ready");
+  } catch (error) { setHelperStatus(error.message || "创建下载任务失败", "error"); }
+  finally { isWechatSelectionDownloading = false; setHistoryControlsDisabled(isWechatHistoryRunning); }
+}
+
+async function refreshWechatHistoryStatus({ silent = false } = {}) {
+  try {
+    const payload = await callWechatHistoryService("status");
+    const message = payload.configured ? "下载连接已就绪，无需登录公众号后台。"
+      : "未配置下载服务，请在本机项目 .env 中设置 TIKHUB_API_KEY。";
+    setHelperStatus(message, payload.configured ? "ready" : "error");
+    if (!silent) appendHelperLog(message, payload.configured ? "success" : "error");
     return payload;
   } catch (error) {
-    setHelperStatus(error.message || "检测公众号后台登录失败", "error");
-    if (!silent) {
-      appendHelperLog(error.message || "检测公众号后台登录失败", "error");
-    }
+    setHelperStatus(error.message || "检测下载连接失败", "error");
+    if (!silent) appendHelperLog(error.message || "检测下载连接失败", "error");
     throw error;
   }
 }
 
-async function resolveWechatHistoryInBackground(seedUrl, startDate, endDate) {
-  const tabId = await createTab(seedUrl, false);
-
-  try {
-    await waitForTabReady(tabId, seedUrl);
-    await sleep(BACKGROUND_TAB_SETTLE_DELAY_MS);
-
-    return await sendMessageWithRecovery(tabId, {
-      type: "feishu-export:resolve-wechat-mp-history",
-      startDate,
-      endDate
+function callWechatHistoryService(action, params) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: "wechat-history", action, params }, response => {
+      if (chrome.runtime.lastError) return reject(new Error("下载连接中断，请刷新扩展后重试。"));
+      if (!response?.ok) return reject(Object.assign(new Error(response?.error || "公众号列表请求失败。"), { code: response?.code, details: response?.details }));
+      resolve(response.data);
     });
-  } finally {
-    await closeTab(tabId);
-  }
-}
-
-async function checkWechatMpLoginFromSeed(seedUrl) {
-  const tabId = await createTab(seedUrl, false);
-
-  try {
-    await waitForTabReady(tabId, seedUrl);
-    await sleep(BACKGROUND_TAB_SETTLE_DELAY_MS);
-
-    return await sendMessageWithRecovery(tabId, {
-      type: "feishu-export:get-wechat-mp-login-status"
-    });
-  } finally {
-    await closeTab(tabId);
-  }
+  });
 }
 
 function sendMessageToActivePage(message) {
@@ -622,6 +742,12 @@ async function sendMessageWithRecovery(arg1, arg2) {
     throw new Error("消息发送参数不完整");
   }
 
+  // An older page has a receiver, but does not recognize the updated export
+  // message. Upgrade before reading instead of waiting for a missing-port error.
+  if (message.type === "feishu-export:export-document-v2") {
+    await injectContentScript(tabId, frameId);
+    return sendMessageToTab(tabId, message, frameId);
+  }
   try {
     return await sendMessageToTab(tabId, message, frameId);
   } catch (error) {
@@ -642,7 +768,7 @@ function injectContentScript(tabId, frameId = null) {
     chrome.scripting.executeScript(
       {
         target,
-        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "shared/web-feishu-blocks.js", "content-scripts/feishu-exporter.js"]
+        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "shared/web-feishu-blocks.js", "shared/image-asset.js", "content-scripts/feishu-exporter.js"]
       },
       () => {
         if (chrome.runtime.lastError) {
@@ -703,6 +829,16 @@ function isMissingReceiverError(error) {
 
 function queryActiveTab() {
   return new Promise((resolve, reject) => {
+    const sourceId = activeTabId || Number(popupRoute.get("sourceTabId"));
+    if (Number.isInteger(sourceId) && sourceId > 0) {
+      chrome.tabs.get(sourceId, tab => {
+        if (chrome.runtime.lastError || !tab) return reject(new Error("原文章页已关闭，请从文章页重新打开插件。"));
+        const requestedSource = popupRoute.get("source");
+        if (requestedSource && tab.url !== requestedSource) return reject(new Error("原文章页已切换，请从文章页重新打开插件。"));
+        resolve([tab]);
+      });
+      return;
+    }
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
@@ -838,7 +974,7 @@ function waitForDownloadCompletion(downloadId, fallbackFilename) {
       if (delta.state.current === "complete") {
         finish(async () => {
           const item = await getDownloadItem(downloadId);
-          resolve({ downloadId, filename: getDownloadDisplayFilename(item, fallbackFilename) });
+          resolve({ downloadId, filename: getDownloadDisplayFilename(item, fallbackFilename), path: item?.filename || "" });
         });
       }
 
@@ -861,7 +997,7 @@ function waitForDownloadCompletion(downloadId, fallbackFilename) {
     chrome.downloads.onChanged.addListener(listener);
     getDownloadItem(downloadId).then((item) => {
       if (item?.state === "complete") {
-        finish(() => resolve({ downloadId, filename: getDownloadDisplayFilename(item, fallbackFilename) }));
+        finish(() => resolve({ downloadId, filename: getDownloadDisplayFilename(item, fallbackFilename), path: item?.filename || "" }));
       } else if (item?.state === "interrupted") {
         finish(() => reject(new Error("下载失败，已中断。")));
       }
@@ -998,22 +1134,28 @@ function setBatchControlsDisabled(disabled) {
 
 function setHistoryControlsDisabled(disabled) {
   helperCheckButton.disabled = disabled;
-  openWechatMpLoginButton.disabled = disabled;
   helperDownloadButton.disabled = disabled;
   helperSeedUrlInput.disabled = disabled;
   helperStartDateInput.disabled = disabled;
   helperEndDateInput.disabled = disabled;
-  includeImagesHelperInput.disabled = disabled;
+  includeImagesHelperInput.disabled = isWechatSelectionDownloading;
+  helperOutputFormatInput.disabled = isWechatSelectionDownloading;
+  helperDownloadButton.textContent = isWechatHistoryRunning ? "正在获取历史…"
+    : matchesWechatRange(wechatHistoryView) && (wechatHistoryView.state === "loading" || wechatHistoryView.state === "error") ? "继续获取" : "获取文章列表";
+  updateWechatSelectionControls();
 }
 
 function setPageMeta(info) {
   titleEl.textContent = info?.title || "请先打开文章或文档";
-  typeEl.textContent = info?.docType || "暂无可导出的正文";
+  typeEl.textContent = detectedCategory === "scys" ? "生财有术"
+    : detectedCategory === "wechat" && info?.docType !== "公众号后台" ? "微信公众号"
+    : info?.docType || "暂无可导出的正文";
 }
 
 function setStatus(message, variant) {
   statusEl.textContent = message;
   statusEl.className = `status status-${variant}`;
+  statusEl.hidden = variant === "ready" && message === "可以导出";
   renderPrimarySurface();
 }
 
@@ -1065,34 +1207,17 @@ async function persistOutputTarget() {
 }
 
 async function handleOutputTargetChange() {
-  const nextTarget = normalizeOutputTarget(outputTargetInputs.find((input) => input.checked)?.value, outputTarget);
-  if (nextTarget === outputTarget) {
-    return;
-  }
-
-  const previousTarget = outputTarget;
-  outputTarget = nextTarget;
+  outputTarget = normalizeOutputTarget(outputTargetInputs.find(input => input.checked)?.value, outputTarget);
+  destination = outputTarget === "download" ? "local" : "obsidian";
   applyOutputTargetToInputs();
-
-  if (wantsObsidian()) {
-    const ready = await ensureObsidianReadyIfNeeded();
-    if (!ready) {
-      outputTarget = previousTarget;
-      applyOutputTargetToInputs();
-      await persistOutputTarget();
-      renderPrimarySurface();
-      return;
-    }
-  }
-
-  await persistOutputTarget();
+  await Promise.all([persistOutputTarget(), storageSet({ clipperDestination: destination })]);
   renderPrimarySurface();
   renderCategoryWorkspace();
 }
 
 function renderPrimarySurface() {
   renderOutputTargetUi();
-  renderPresetUi();
+
   primaryActionModel = buildPrimaryActionModel({
     isSupportedPage: Boolean(pageInfo?.supports?.includes?.("markdown")),
     isWechatMpBackend: pageInfo?.docType === "公众号后台",
@@ -1107,7 +1232,7 @@ function renderPrimarySurface() {
   }
   if (primaryActionButton) {
     const action = primaryActionModel.primaryAction;
-    primaryActionButton.hidden = !action;
+    primaryActionButton.hidden = !action || (destination === "feishu" && action.key !== "focus-wechat-history" && !activeExportTask);
     if (actionButtonsLocked && activeExportTask && action) {
       primaryActionButton.disabled = false;
       primaryActionButton.textContent = "停止导出";
@@ -1117,16 +1242,22 @@ function renderPrimarySurface() {
         || (actionButtonsLocked && action.key !== "focus-wechat-history")
         || (action.key === "export-course" && !courseExportEnabled);
       primaryActionButton.textContent = action?.label || "当前页暂不支持";
+      if (action?.key === "export-markdown" && destination === "obsidian") {
+        primaryActionButton.textContent = !obsidianBinding ? "选择 Obsidian 目录" : "保存到 Obsidian";
+      } else if (action?.key === "export-markdown" && destination === "local") {
+        primaryActionButton.textContent = "导出 Markdown";
+      }
       primaryActionButton.dataset.actionKey = action?.key || "";
     }
   }
   if (secondaryActionButton) {
     const action = primaryActionModel.secondaryAction;
-    secondaryActionButton.hidden = !action;
+    secondaryActionButton.hidden = !action || destination === "feishu";
     secondaryActionButton.disabled = actionButtonsLocked || !action;
     secondaryActionButton.textContent = action?.label || "";
     secondaryActionButton.dataset.actionKey = action?.key || "";
   }
+  renderDestinationUi();
   if (detectedCategoryBadgeEl) {
     const meta = getCategoryMeta(detectedCategory);
     detectedCategoryBadgeEl.textContent = meta.label;
@@ -1149,87 +1280,6 @@ function renderOutputTargetUi() {
   if (batchZipOutputInput) {
     batchZipOutputInput.disabled = !targetState.wantsDownload || isWechatHistoryRunning;
   }
-}
-
-function renderPresetUi() {
-  const presetState = resolvePopupPresetState({
-    outputTarget,
-    includeImages: includeImagesInput.checked
-  });
-
-  presetButtons.forEach((button) => {
-    const key = button.dataset.preset || "";
-    const active = key === presetState.key;
-    button.dataset.active = active ? "true" : "false";
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-  });
-
-  if (!presetSummaryEl) {
-    return;
-  }
-
-  presetSummaryEl.hidden = presetState.key !== "custom";
-  if (presetState.key === "custom") {
-    presetSummaryEl.textContent = "自定义组合";
-    return;
-  }
-
-  presetSummaryEl.textContent = `已选：${presetState.label}`;
-}
-
-async function handlePresetSelection(presetKey) {
-  const previousTarget = outputTarget;
-  const previousIncludeImages = includeImagesInput.checked;
-  let nextTarget = outputTarget;
-  let nextIncludeImages = includeImagesInput.checked;
-
-  switch (presetKey) {
-    case "quick-export":
-      nextTarget = "download";
-      nextIncludeImages = false;
-      break;
-    case "ai-ready":
-      nextTarget = "download";
-      nextIncludeImages = true;
-      break;
-    case "obsidian":
-      nextTarget = "obsidian";
-      nextIncludeImages = true;
-      break;
-    default:
-      return;
-  }
-
-  const changed = nextTarget !== outputTarget || nextIncludeImages !== includeImagesInput.checked;
-  if (!changed) {
-    renderPrimarySurface();
-    return;
-  }
-
-  outputTarget = nextTarget;
-  includeImagesInput.checked = nextIncludeImages;
-  includeImagesHelperInput.checked = nextIncludeImages;
-  applyOutputTargetToInputs();
-  renderPrimarySurface();
-  renderCategoryWorkspace();
-
-  if (wantsObsidian()) {
-    const ready = await ensureObsidianReadyIfNeeded();
-    if (!ready) {
-      outputTarget = previousTarget;
-      includeImagesInput.checked = previousIncludeImages;
-      includeImagesHelperInput.checked = previousIncludeImages;
-      applyOutputTargetToInputs();
-      renderPrimarySurface();
-      renderCategoryWorkspace();
-      await persistOutputTarget();
-      return;
-    }
-  }
-
-  await persistOutputTarget();
-  renderPrimarySurface();
-  renderCategoryWorkspace();
 }
 
 function getCategoryMeta(categoryKey) {
@@ -1327,6 +1377,11 @@ function renderOtherWorkspace() {
 
 async function handlePrimaryAction() {
   const actionKey = primaryActionButton.dataset.actionKey;
+  if (destination === "obsidian" && !obsidianBinding && ["export-markdown", "export-course"].includes(actionKey)) {
+    focusObsidianSettings();
+    await handlePickObsidianFolder();
+    return;
+  }
   await handleActionByKey(actionKey);
 }
 
@@ -1356,11 +1411,20 @@ async function handleActionByKey(actionKey) {
 }
 
 async function loadPopupPreferences() {
-  const result = await storageGet(["outputTarget", "obsidianSyncEnabled"]);
+  const result = await storageGet(["outputTarget", "obsidianSyncEnabled", "clipperDestination", "includeImages"]);
+  const requested = popupRoute.get("destination");
+  destination = ["feishu", "obsidian", "local"].includes(requested) ? requested
+    : ["feishu", "obsidian", "local"].includes(result.clipperDestination) ? result.clipperDestination : "feishu";
+  if (typeof result.includeImages === "boolean") {
+    includeImagesInput.checked = result.includeImages;
+    includeImagesHelperInput.checked = result.includeImages;
+  }
   outputTarget = normalizeOutputTarget(
     result.outputTarget,
     result.obsidianSyncEnabled === true ? "both" : "download"
   );
+  if (destination === "local") outputTarget = "download";
+  if (destination === "obsidian" && outputTarget === "download") outputTarget = "obsidian";
 }
 
 function applyOutputTargetToInputs() {
@@ -1468,7 +1532,7 @@ async function handleClearObsidianFolder() {
     setObsidianStatus("已清除 Obsidian 目录授权。", "ready");
     clearObsidianFolderButton.disabled = true;
     if (wantsObsidian()) {
-      outputTarget = "download";
+      outputTarget = destination === "obsidian" ? "obsidian" : "download";
       applyOutputTargetToInputs();
       await persistOutputTarget();
     }
@@ -1486,7 +1550,7 @@ async function ensureObsidianReadyIfNeeded() {
   const binding = await refreshObsidianBinding({ silent: true });
   if (!binding) {
     setStatus("请先选择 Obsidian 目标目录，再使用此导出方式。", "error");
-    focusElement(pickObsidianFolderButton);
+    focusObsidianSettings();
     return false;
   }
 
@@ -1498,7 +1562,7 @@ async function ensureObsidianReadyIfNeeded() {
 
   if (permission !== "granted") {
     setStatus("Obsidian 目录授权已失效，请重新授权后再导出。", "error");
-    focusElement(pickObsidianFolderButton);
+    focusObsidianSettings();
     return false;
   }
 
@@ -1622,7 +1686,7 @@ async function materializeWebImageAssets(payload, tabId) {
 }
 
 async function downloadExportPayload(payload, filename, format) {
-  const assets = Array.isArray(payload?.assets) ? payload.assets.filter(isValidAssetPayload) : [];
+  const assets = Array.isArray(payload?.assets) ? payload.assets : [];
   if (assets.length === 0) {
     return downloadGeneratedText(
       payload.content,
@@ -1633,41 +1697,42 @@ async function downloadExportPayload(payload, filename, format) {
     );
   }
 
-  const folderName = buildAssetBundleFolderName(filename);
-  const markdownPath = `${folderName}/document.md`;
-  const markdownDownload = await downloadGeneratedBlob(
-    new Blob([payload.content], { type: payload.mimeType }),
-    markdownPath,
-    format,
-    false
-  );
-
-  for (const asset of assets) {
-    await downloadGeneratedBlob(
-      new Blob([base64ToUint8Array(asset.contentBase64)], { type: asset.mimeType || "application/octet-stream" }),
-      `${folderName}/${asset.path}`,
-      format,
-      false
-    );
+  // Reuse the Obsidian attachment convention, with a fresh namespace for each
+  // save so duplicate article titles cannot overwrite earlier images.
+  const archived = obsidianExportApi.namespaceObsidianAssets(payload.content, assets, crypto.randomUUID());
+  const files = archived.assets.map(asset => ({ ...asset, bytes: base64ToUint8Array(asset.contentBase64) }));
+  let downloadDirectory = "";
+  for (const [index, asset] of files.entries()) {
+    throwIfExportCanceled();
+    setStatus(`正在保存图片 ${index + 1}/${files.length}…`, "loading");
+    const result = await downloadGeneratedBlob(new Blob([asset.bytes], { type: asset.mimeType || "application/octet-stream" }),
+      asset.path, format, false, true);
+    const actualPath = String(result?.path || "").replace(/\\/g, "/");
+    if (!actualPath.endsWith(`/${asset.path}`)) throw new Error("图片保存位置发生变化，已停止生成文章，避免图片路径失效。请检查浏览器下载设置后重试。");
+    const directory = actualPath.slice(0, -asset.path.length);
+    if (downloadDirectory && downloadDirectory !== directory) throw new Error("图片保存到了不同目录，已停止生成不完整文章。");
+    downloadDirectory = directory;
   }
-
-  return markdownDownload || { filename: markdownPath };
-}
-
-async function downloadSelfContainedMarkdownPayload(payload, markdownFilename) {
-  const assets = Array.isArray(payload?.assets) ? payload.assets.filter(isValidAssetPayload) : [];
-  const markdown = embedAssetsAsDataUris(payload?.content || "", assets);
-  return downloadGeneratedText(markdown, payload?.mimeType, markdownFilename, "markdown", false);
+  throwIfExportCanceled();
+  setStatus(`图片已保存，正在生成文章：${filename}。`, "loading");
+  const result = await downloadGeneratedBlob(new Blob([archived.markdown], { type: payload.mimeType }), filename, format, false, true);
+  const notePath = String(result?.path || "").replace(/\\/g, "/");
+  if (notePath.slice(0, notePath.lastIndexOf("/") + 1) !== downloadDirectory) {
+    throw new Error("文章与图片保存位置不一致，请将文章放回图片目录旁边；此次未确认为完整保存。");
+  }
+  return { ...result, started: true };
 }
 
 async function downloadGeneratedText(content, mimeType, filename, format, saveAs) {
   return downloadTextWithAnchor(content, mimeType, filename, format);
 }
 
-async function downloadGeneratedBlob(blob, filename, format, saveAs) {
+async function downloadGeneratedBlob(blob, filename, format, saveAs, preservePath = false) {
   const url = URL.createObjectURL(blob);
   try {
-    return await downloadWithFallback(url, filename, format, saveAs);
+    // A fallback filename would silently break Markdown attachment references.
+    return preservePath ? await downloadFile({ url, filename, saveAs, conflictAction: "uniquify" })
+      : await downloadWithFallback(url, filename, format, saveAs);
   } finally {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -1696,18 +1761,6 @@ function downloadTextWithAnchor(content, mimeType, filename, format) {
   });
 }
 
-function buildAssetBundleFolderName(filename) {
-  return String(filename || "feishu-export.md")
-    .replace(/\.[^.]+$/i, "")
-    .replace(/[<>:"/\\|?*\u0000-\u001F\u007F-\u009F]/g, "_")
-    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[. ]+$/g, "")
-    .slice(0, 80)
-    || "feishu-export";
-}
-
 function isValidAssetPayload(asset) {
   return Boolean(
     asset
@@ -1725,15 +1778,6 @@ function base64ToUint8Array(value) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
-}
-
-function embedAssetsAsDataUris(markdown, assets) {
-  let result = String(markdown || "");
-  for (const asset of assets) {
-    const dataUri = `data:${asset.mimeType || "application/octet-stream"};base64,${asset.contentBase64}`;
-    result = result.split(`(${asset.path})`).join(`(${dataUri})`);
-  }
-  return result;
 }
 
 function forceStripWechatNoiseTail(value) {
@@ -2009,4 +2053,113 @@ function syncIncludeImages(fromPrimary) {
   includeImagesHelperInput.checked = checked;
   renderPrimarySurface();
   renderCategoryWorkspace();
+}
+
+async function selectDestination(value) {
+  if (!["feishu", "obsidian", "local"].includes(value) || activeExportTask || openingSave) return;
+  destination = value;
+  obsidianSettingsRequested = false;
+  if (value === "local") outputTarget = "download";
+  if (value === "obsidian") outputTarget = outputTarget === "both" ? "both" : "obsidian";
+  applyOutputTargetToInputs();
+  renderPrimarySurface();
+  renderCategoryWorkspace();
+  await Promise.all([persistOutputTarget(), storageSet({ clipperDestination: value })]);
+}
+
+function focusObsidianSettings() {
+  obsidianSettingsRequested = true;
+  const dock = document.getElementById("obsidianDock");
+  dock.hidden = false;
+  focusElement(pickObsidianFolderButton);
+}
+
+function renderDestinationUi() {
+  const feishu = destination === "feishu";
+  const backend = pageInfo?.docType === "公众号后台";
+  document.getElementById("workspaceShell").dataset.destination = destination;
+  destinationButtons.forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.destination === destination));
+    button.disabled = Boolean(activeExportTask || openingSave);
+  });
+  document.getElementById("changeDestination").hidden = destination === "local" || backend;
+  document.getElementById("changeDestination").disabled = Boolean(activeExportTask || openingSave);
+  document.getElementById("changeDestinationLabel").textContent = "更改";
+  document.getElementById("contentOptions").hidden = feishu || backend;
+  document.getElementById("obsidianDock").hidden = destination !== "obsidian" && !obsidianSettingsRequested;
+  if (feishu) {
+    const target = feishuOverview.target;
+    destinationValue.textContent = target ? [target.spaceName, target.title].filter(Boolean).join(" / ") : "选择知识库位置";
+    if (!target) document.getElementById("changeDestinationLabel").textContent = "选择";
+    const state = feishuOverview.connection?.state || "checking";
+    connectionIndicator.dataset.state = state;
+    connectionIndicator.textContent = ({ connected: "连接器已就绪", checking: "正在检测连接…", setup: "需要首次连接", needs_auth: "需要恢复授权", error: "连接暂不可用" })[state];
+    connectionIndicator.hidden = backend;
+  } else {
+    destinationValue.textContent = obsidianBinding?.meta?.folderName || obsidianBinding?.handle?.name || "选择 Obsidian 目录";
+    if (outputTarget === "both" && obsidianBinding) destinationValue.textContent += " · 同时下载到本地";
+    connectionIndicator.hidden = true;
+  }
+  openFeishuSaveButton.hidden = !feishu || backend || Boolean(activeExportTask);
+  openFeishuSaveButton.disabled = openingSave || !/^https?:\/\//i.test(activeTabUrl);
+  openFeishuSaveButton.textContent = openingSave ? "正在打开…" : "保存到飞书";
+}
+
+async function loadCachedOverview() {
+  const cached = recentSaveModel.readStoredOverview(await storageGet(recentSaveModel.storageKeys));
+  feishuOverview = { ...feishuOverview, ...cached };
+  renderRecentSaves();
+  renderPrimarySurface();
+}
+
+async function loadFeishuOverview() {
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "feishu-clip", action: "overview" });
+    if (!result?.ok) throw new Error(result?.error || "无法读取连接状态");
+    feishuOverview = result.data;
+  } catch (_) {
+    // A connector check must never hide locally retained save results.
+    feishuOverview.connection = { state: "error" };
+  }
+  renderRecentSaves();
+  renderPrimarySurface();
+}
+
+function renderRecentSaves() {
+  const rows = recentSaveModel.buildRecentSaves(feishuOverview.jobs, chrome.runtime.getURL(""));
+  const pending = rows.filter(row => row.status === "running").length;
+  const paused = rows.filter(row => row.status === "paused").length;
+  const summary = document.getElementById("recentSummary");
+  summary.textContent = pending ? `${pending} 项处理中` : paused ? `${paused} 项需处理` : "";
+  summary.dataset.attention = String(paused > 0);
+  const list = document.getElementById("recentSaveList");
+  // Preserve focus and scroll while the background updates the same tasks.
+  const visible = rows.slice(0, recentLimit);
+  const signature = JSON.stringify(visible);
+  if (list.dataset.signature !== signature) {
+    const focusedId = list.contains(document.activeElement) ? document.activeElement.dataset.jobId : null;
+    list.replaceChildren(...visible.map(row => {
+      const item = document.createElement("li");
+      const link = document.createElement(row.href ? "a" : "div");
+      link.className = "recent-save";
+      link.dataset.jobId = row.id;
+      if (row.href) { link.href = row.href; link.target = "_blank"; link.rel = "noopener noreferrer"; }
+      const title = document.createElement("span");
+      title.className = "recent-title";
+      title.textContent = row.title;
+      const state = document.createElement("span");
+      state.className = `recent-state recent-state-${row.status}`;
+      state.textContent = row.label;
+      const target = document.createElement("span");
+      target.className = "recent-target";
+      target.textContent = row.targetLabel ? `飞书 · ${row.targetLabel}` : "飞书";
+      link.append(title, state, target);
+      item.append(link);
+      return item;
+    }));
+    list.dataset.signature = signature;
+    if (focusedId) Array.from(list.querySelectorAll("a")).find(link => link.dataset.jobId === focusedId)?.focus({ preventScroll: true });
+  }
+  document.getElementById("recentEmpty").hidden = rows.length > 0;
+  document.getElementById("moreRecentSaves").hidden = rows.length <= recentLimit;
 }

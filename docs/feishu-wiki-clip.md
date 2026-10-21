@@ -84,6 +84,7 @@ docx:document:write_only docs:document.media:upload space:document:retrieve offl
 | `feishu-save.html/js/css` | 登录、目录选择、默认位置、进度和恢复 |
 | `shared/feishu-wiki-clip.js` | 内容收集、重建、迁入及位置核对状态机 |
 | `shared/feishu-image-capture.js` | 在准确飞书源页面中读取图片，不传出凭据 |
+| `shared/image-asset.js` | 按文件签名识别图片格式，浏览器实际解码并保留原字节，供飞书和网页读取共用 |
 | `shared/web-feishu-blocks.js` | 网页 DOM 转飞书块，拒绝不完整内容 |
 | `shared/web-image-capture.js` | 网页图片读取、类型/大小检查和字节保留 |
 | `shared/feishu-clip-service.js` | 验证扩展页面消息来源、逐篇持久队列、原生请求串行执行及结果通知 |
@@ -109,6 +110,10 @@ docx:document:write_only docs:document.media:upload space:document:retrieve offl
 | 异步迁入结果 | `GET /wiki/v2/tasks/{完整task_id}?task_type=move` |
 
 图片下载使用正常图片查看器的 `download/preview/{token}/?preview_type=16`，并检查实际像素，防止预览缩略图混入。读取的是浏览器可访问的完整分辨率图片；不据此宣称与原始附件文件逐字节相同。连接器只处理固定业务动作，不接受任意本机命令或路径。`prepare_web_content` 仅由扩展后台调用，接收 `{operation_id, source_url, snapshot?}`；首次快照严格校验 `{title, source_url, blocks, images}`、块类型、树结构、图片绑定、大小和 URL 协议。省略快照只恢复匹配操作和网址的已有记录，否则返回 `IMPORT_NOT_PREPARED`。图片网址只回传浏览器读取，本机不会对快照网址发起请求。网页内容脚本无权向连接器发起写入。不会调用审批申请、删除或消息发送接口。
+
+图片响应的 `Content-Type` 仅作提示，不能作为文件格式依据：飞书预览服务可能把实际 PNG 标为 `image/jpeg`。共享读取器以 PNG/JPEG/GIF/WebP/BMP 文件签名确定 MIME，再交给浏览器实际解码及测量像素，不转码或压缩原字节；HTML、未知格式和解码失败仍中止。连接器独立按暂存文件头确定上传格式和扩展名。旧读取器传错 MIME、旧任务留下完整文件或多分块进度时，可校正尚未完成暂存或上传的错误 MIME；必须保持总大小、重叠字节、像素及已有 SHA 一致，不删除已有文件，不重置已暂存、上传或绑定的记录。
+
+此类故障可继续原任务的“重试保存图片”。本机 launcher 直接指向本仓库源码时，后续 Native Messaging 调用即使用修复后的连接器；浏览器新共享读取器需要重新加载扩展后生效。使用固定下载版本的其他安装，需发布修复后的源码版本并同步安装向导的 revision/SHA 后再更新，不能仅更换校验值冒充已发布。
 
 ## 数据完整性与恢复
 
@@ -158,6 +163,18 @@ docx:document:write_only docs:document.media:upload space:document:retrieve offl
 扩展保留任务队列、默认位置及历史兼容记录；不会将正文存入扩展 storage。正文快照、图片和操作 journal 留在本机连接器状态目录，完成或结束任务后不会自动删除，用户可自行管理。结束任务不会撤销飞书已接收的操作，已有文档仍保留。
 
 ## 验证
+
+2026-10-21 单篇本地带图导出：改为下载根目录的标题 Markdown 加 `assets/<保存标识>/` 图片附件，不再内嵌 Base64 或强制 ZIP。复用 Obsidian 的附件隔离逻辑，逐图等待 Chrome 下载完成并核对实际路径；图片完整后才生成文章，重名另存、取消、图片中断和路径被更改均有回归。飞书本地带图读取 `preview_type=16`，通过共享读取器识别真实格式、解码及核对像素，失败不回退远程链接。公众号单篇使用图片请求占位，既有批量内嵌格式保持兼容。exporter v7 通过 `export-document-v2` 新消息升级旧页面，新入口发送前主动注入依赖，避免旧 listener 未响应时无法升级。
+
+真实 Chromium 的 `local-images.cjs` 使用独立临时下载目录和原生下载命名，检查完成状态、磁盘原字节、重复配图、同名文章、旧 v6 页面升级、离线解码以及缺图时停止；`web-local-export.cjs` 验证 1940×1076 原图不会被 DOM 缩略图或 JPEG 误标替代，并验证公众号新旧模式。`popup-ui.cjs`、`image-format.cjs`、`feishu-fidelity.cjs` 及相关单元、语法、补丁检查通过。全量 JavaScript 300 项中 299 项通过，唯一未通过仍为 10-20 修改 helper 后的固定发布源码 SHA 校验，未改变或绕过该检查。未执行完整浏览器套件、重新发布或新增真实飞书写入。用户确认原有直接保存到 Obsidian 可见图片；本轮自动浏览器验收不冒充用户 Obsidian 的实机显示验收。
+
+用户已下载的 19 图 Markdown 另存为兼容副本：图片逐一解码为独立文件、SHA-256 不变，替换回原 data URI 后可逐字节还原原文；Markdown 从 3,972,386 字节降为 12,913 字节，原文件保留。此副本只还原既有图片，不能恢复旧预览中已经缩小的分辨率；新导出才使用完整分辨率预览。
+
+后续用户反馈新下载文件无图时，实机核对其 19 处相对引用均对应可解码的 PNG/JPEG，且已保留完整像素（包括 4096×4096 图片）。通过 Finder 对同一文件比较两条打开路径：Obsidian 1.14.4 提供的 Quick Look（`obsidian-preview://bundle/index.html`）只显示正文、无正文图片；点击“通过 Obsidian 打开”后，Obsidian 路径栏明确显示 Downloads 下实际下载的文件，阅读视图的首张原图正常可见。当前下载文件不需要重做或修改；此前把浏览器离线显示当作充分阅读验收的范围不完整。此轮只补充实机打开验证及文档，没有改写用户笔记、配图或系统预览设置。
+
+2026-10-20 图片类型误标修复：用户样本 19 张图片中 4 张实际 PNG 被预览响应标为 JPEG，导致首图 `stage_image` 报 `IMAGE_INVALID`，尚未新建文档。修复后的正式读取器在已登录浏览器读取 19/19 张，共 6,307,422 字节，像素均不小于源记录；首图 SHA 与原失败任务留存文件一致。将原任务计划、journal 和首图字节复制到隔离临时状态，正式连接器在禁止远程调用的条件下接受旧读取器的 JPEG 声明、恢复暂存并记录 PNG，字节及 SHA 不变；未推进或改写用户真实任务，也未新建真实飞书文档。
+
+171 项 Python 回归、真实 Chromium 的 `tests/browser/image-format.cjs` 和 `feishu-extension.cjs`、语法及补丁检查通过。新增图片格式浏览器回归随 `npm run test:browser` 执行，覆盖错误 MIME、二进制响应、旧注入升级、原字节和像素保留，以及 HTML、损坏图片、缩略图的拒绝。JavaScript 全量 293 项中 292 项通过，唯一失败为固定连接器源码的 SHA 发布校验：本次 helper 修改尚未发布，因此保留旧 revision/SHA，不跳过检查或伪造新版下载信息。未执行完整浏览器套件。
 
 2026-09-29 生财嵌套列表修复：真实文章 `55522542455512284` 在原转换器上稳定触发 `CONTENT_MISMATCH`。根因是 `.bullet_container` / `.block-order` 只转换 `.list`，遗漏兄弟 `.list-children` 中的正文；现按父子列表结构递归转换，并限制序号、装饰符查找到本层，保留全量内容核对。修复后该文章捕获 311 块（含根）、40 张正文图片；浏览器实际读取 40/40 张，原始图片共 2,202,266 字节。正式连接器 `build_web_plan` 在隔离本地环境接受快照及两批正文计划，没有调用真实飞书写入。
 

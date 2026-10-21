@@ -1,5 +1,4 @@
-html,
-body {
+html, body {
   width: 100%;
   min-width: 0;
   min-height: 100%;
@@ -7,620 +6,157 @@ body {
 }
 
 .clip-app {
-  width: 100%;
-  max-width: 744px;
+  position: relative;
+  width: calc(100% - 48px);
+  max-width: 720px;
   min-width: 0;
-  margin: 0 auto;
-  padding: 36px 24px 40px;
-  gap: 16px;
+  margin: 40px auto;
+  padding: 0;
+  gap: 0;
+  border: 1px solid var(--ui-border);
+  border-radius: 16px;
+  background: var(--ui-surface);
+  box-shadow: 0 10px 36px rgb(62 43 25 / 5%);
+  overflow: hidden;
 }
 
-.clip-app > *,
-.clip-app .advanced-content,
-.clip-app .field-group {
-  min-width: 0;
-}
-
+.clip-app > *, .clip-app .advanced-content, .clip-app .field-group { min-width: 0; }
 .clip-app .clip-header {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 14px;
-  padding: 0 0 8px;
-}
-
-.clip-header-icon {
-  display: grid;
-  place-items: center;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
-  color: var(--ui-accent);
-  background: var(--ui-accent-soft);
-  border-radius: 12px;
-}
-
-.clip-app h1 {
-  font-size: 26px;
-  line-height: 1.35;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-
-.clip-app .topbar-copy {
-  gap: 5px;
-}
-
-.clip-app .subtitle-inline {
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.clip-app .workspace-panel {
-  padding: 24px;
-}
-
-.clip-app .panel-head {
-  margin-bottom: 10px;
-}
-
-.clip-app .panel-head h2 {
-  font-size: 14px;
-  line-height: 1.5;
-  font-weight: 600;
-}
-
-.clip-app .save-content-panel .panel-head h2 {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-}
-
-.clip-app .article-title {
-  margin: 0 0 12px;
-  color: var(--ui-text);
-  font-size: 21px;
-  font-weight: 650;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-}
-
-.clip-app .destination-section {
-  margin-top: 20px;
-  padding-top: 24px;
-  border-top: 1px solid var(--ui-border);
-}
-
-.clip-app .destination-section .panel-head {
-  margin-bottom: 8px;
-}
-
-.clip-app .field-group {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-}
-
-.clip-app .field-label {
-  color: var(--ui-text);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.clip-app .text-input {
-  min-width: 0;
-  min-height: 42px;
-  font-size: 13px;
-}
-
-.clip-app .text-input::placeholder {
-  color: var(--ui-text-muted);
-  opacity: 1;
-}
-
-.clip-app .hint {
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  line-height: 1.75;
-  overflow-wrap: anywhere;
-}
-
-.clip-app .status {
-  margin: 12px 0;
-  font-size: 13px;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-.clip-app #targetSummary {
-  margin: 0 0 8px;
-}
-
-.clip-app #targetSummary.status-ready {
-  padding: 0;
-  color: var(--ui-text);
-  background: transparent;
-  font-size: 15px;
-  font-weight: 500;
-}
-
-.clip-app .actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.clip-app .button {
-  max-width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  padding: 9px 14px;
-  font-size: 13px;
-  line-height: 1.5;
-  text-decoration: none;
-  text-align: center;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.clip-app .button-small {
-  min-height: 36px;
-  padding: 8px 12px;
-  font-size: 12px;
-}
-
-.clip-app .advanced-settings {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.clip-app .advanced-settings[open] {
-  background: transparent;
-}
-
-.clip-app .advanced-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  min-height: 38px;
-  padding: 5px 0;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.65;
-  list-style: none;
+  min-height: 84px;
+  padding: 20px 28px;
+  padding-right: 164px;
+  border-bottom: 1px solid var(--ui-border);
 }
+.clip-header-icon { display: block; flex: 0 0 40px; width: 40px; height: 40px; border-radius: 11px; }
+.clip-app .topbar-copy { display: flex; align-items: center; gap: 16px; }
+.clip-app h1 { margin: 0; font-size: 20px; line-height: 1.4; font-weight: 600; white-space: nowrap; letter-spacing: -.02em; }
+.clip-header-context { padding-left: 16px; border-left: 1px solid var(--ui-border-strong); color: var(--ui-text-muted); font-size: 13px; white-space: nowrap; }
+.clip-app .workspace-panel { padding: 28px 32px; border: 0; border-radius: 0; box-shadow: none; }
+.clip-app .panel-head { margin-bottom: 10px; }
+.clip-app .panel-head h2 { font-size: 14px; line-height: 1.5; font-weight: 600; }
+.clip-app .save-content-panel .panel-head h2 { color: var(--ui-text-muted); font-size: 12px; font-weight: 400; }
+.clip-app .article-title { margin: 0 0 8px; color: var(--ui-text); font-size: 23px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.clip-app .destination-section { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--ui-border); }
+.clip-app .destination-section .panel-head { margin-bottom: 8px; }
+.clip-app .field-group { display: grid; gap: 10px; margin: 0; }
+.clip-app .field-label { color: var(--ui-text); font-size: 13px; font-weight: 500; }
+.clip-app .text-input { min-width: 0; min-height: 44px; font-size: 13px; }
+.clip-app .text-input::placeholder { color: var(--ui-text-muted); opacity: 1; }
+.clip-app .hint { margin: 0; color: var(--ui-text-muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.clip-app .status { margin: 12px 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.clip-app #targetSummary { margin: 0 0 8px; }
+.clip-app #targetSummary.status-ready { padding: 0; color: var(--ui-text); background: transparent; font-size: 15px; font-weight: 500; }
+.clip-app .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.clip-app .button { max-width: 100%; min-width: 0; min-height: 40px; padding: 9px 14px; font-size: 13px; line-height: 1.5; text-decoration: none; text-align: center; overflow-wrap: anywhere; white-space: normal; }
+.clip-app .button-small { min-height: 36px; padding: 8px 12px; font-size: 12px; }
+.clip-app .advanced-settings { border: 0; border-radius: 0; background: transparent; }
+.clip-app .advanced-settings[open] { background: transparent; }
+.clip-app .advanced-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 7px 0; color: var(--ui-text-muted); font-size: 13px; font-weight: 400; line-height: 1.65; list-style: none; }
+.clip-app .advanced-summary::-webkit-details-marker { display: none; }
+.clip-app .advanced-summary::after { content: ""; flex: 0 0 6px; width: 6px; height: 6px; margin-right: 3px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.clip-app details[open] > .advanced-summary::after { transform: rotate(225deg); }
+.clip-app .advanced-summary:hover { color: var(--ui-accent); }
+.clip-app .advanced-summary:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 4px; border-radius: 4px; }
+.clip-app .advanced-content { display: grid; gap: 12px; padding: 12px 0 4px; }
+.clip-app #locationPicker { margin-top: 4px; border-top: 1px solid var(--ui-border); padding-top: 8px; }
+.clip-app #resolveTarget, .clip-app #loadSpaces, .clip-app #moreNodes, .clip-app #copyAgentPrompt, .clip-app #copyInstall { justify-self: start; }
 
-.clip-app .advanced-summary::after {
-  content: "";
-  flex: 0 0 6px;
-  width: 6px;
-  height: 6px;
-  margin-right: 3px;
-  border: solid currentColor;
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
+/* A healthy connection belongs beside the page title; only setup and failures
+   need a panel in the user's main task. Keep its button keyboard accessible. */
+.clip-app #connectionPanel { padding: 24px 32px; border-bottom: 1px solid var(--ui-border); }
+.clip-app #connectionPanel .panel-head { margin-bottom: 6px; }
+.clip-app #connectionPanel .status { margin: 0; }
+.clip-app #connectionPanel[data-state="setup"] .status { background: transparent; color: var(--ui-text-muted); padding: 0; }
+.clip-app #connectionPanel[data-state="connected"] { position: absolute; right: 24px; top: 23px; padding: 0; border: 0; background: transparent; }
+.clip-app #connectionPanel[data-state="connected"] .panel-head { display: none; }
+.clip-app #connectionPanel[data-state="connected"] .actions { margin: 0; }
+.clip-app #connectionPanel[data-state="connected"] #refreshConnection { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 7px 8px; border-color: transparent; background: transparent; color: var(--ui-text-muted); font-weight: 400; }
+.clip-app #connectionPanel[data-state="connected"] #refreshConnection::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ui-success); box-shadow: 0 0 0 3px var(--ui-success-soft); }
+.clip-app #connectionPanel[data-state="connected"] #refreshConnection:hover { background: var(--ui-surface-muted); color: var(--ui-text); }
+.clip-app #authLink { display: inline-block; margin-top: 12px; font-size: 13px; }
+.clip-app #useLocalExport { margin-top: 16px; }
+.clip-app #setup { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--ui-border); }
+.clip-app .save-action-area { display: grid; gap: 10px; margin-top: 22px; }
+.clip-app .save-button { width: 100%; min-height: 48px; margin: 0; font-size: 15px; }
+.clip-app #saveFeedback { margin: 0; }
+.clip-app #saveHint { text-align: center; font-size: 12px; }
+
+.clip-app #jobPanel .panel-head h2 { margin: 0; color: var(--ui-text); font-size: 25px; line-height: 1.45; letter-spacing: -.02em; }
+.clip-app #jobTitle { margin: 12px 0 6px; font-size: 19px; line-height: 1.5; font-weight: 500; color: var(--ui-text); }
+.clip-app #jobTitle, .clip-app #jobDetailStatus { overflow-wrap: anywhere; }
+.clip-app #jobDestination { font-size: 13px; }
+.clip-app #jobStatus { padding: 10px 13px; margin: 20px 0 0; background: var(--ui-surface-muted); border-radius: 8px; color: var(--ui-text-muted); }
+.clip-app #jobStatus.status-error { color: var(--ui-danger); background: var(--ui-danger-soft); }
+.clip-app #jobDetails { margin-top: 20px; padding-top: 8px; border-top: 1px solid var(--ui-border); }
+.clip-app .job-progress { margin: 26px 0 22px; }
+.clip-app .job-heading { display: flex; align-items: center; gap: 14px; }
+.clip-app .completion-icon { display: grid; place-items: center; flex: none; width: 52px; height: 52px; color: var(--ui-success); background: var(--ui-success-soft); border-radius: 50%; }
+.clip-app .completion-icon svg { width: 28px; height: 28px; }
+.clip-app .completion-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; margin: 16px 0 20px; color: var(--ui-text-muted); font-size: 13px; line-height: 1.7; }
+.clip-app .completion-duration { display: inline-flex; align-items: baseline; gap: 5px; }
+.clip-app #completionTime { color: var(--ui-text); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.clip-app #jobPanel[data-state="complete"] #jobTitle { margin-top: 20px; }
+.clip-app .progress-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; margin-bottom: 10px; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.clip-app .progress-heading strong { font-weight: 500; }
+.clip-app #progressCount, .clip-app .progress-timing { font-variant-numeric: tabular-nums; color: var(--ui-text-muted); }
+.clip-app #progressBar { display: block; appearance: none; width: 100%; height: 7px; border: 0; border-radius: 8px; overflow: hidden; background: var(--ui-border); accent-color: var(--ui-accent); }
+.clip-app #progressBar::-webkit-progress-bar { background: var(--ui-border); border-radius: 8px; }
+.clip-app #progressBar::-webkit-progress-value { background: var(--ui-accent); border-radius: 8px; }
+.clip-app #progressBar:indeterminate::-webkit-progress-bar { background: var(--ui-accent-soft); animation: progress-wait 1.8s ease-in-out infinite alternate; }
+.clip-app .job-progress[data-waiting="true"] #progressBar::-webkit-progress-bar { animation: none; }
+@keyframes progress-wait { to { background: var(--ui-border-strong); } }
+.clip-app .progress-notice { margin: 12px 0 0; color: var(--ui-accent); }
+.clip-app .job-progress[data-attention="true"] .progress-notice { color: var(--ui-danger); }
+@media (prefers-reduced-motion: reduce) { .clip-app #progressBar:indeterminate::-webkit-progress-bar { animation: none; } }
+.clip-app #resultLink { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin: 0; padding: 11px 20px; }
+.clip-app #resultLink::after { content: "↗"; font-size: 16px; }
+.clip-app #endTask { color: var(--ui-danger); }
+.clip-app .command { display: block; margin: 0; padding: 14px; border: 1px solid var(--ui-border); border-radius: 8px; color: var(--ui-text); background: var(--ui-surface-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+.clip-app .node-list { display: grid; gap: 6px; max-height: 310px; margin: 0; padding: 0; list-style: none; overflow-y: auto; }
+.clip-app .node-list button { width: 100%; text-align: left; }
+.clip-app .node-list:empty::after { content: "尚未加载页面，或此位置没有子页面。"; padding: 14px 0; color: var(--ui-text-muted); font-size: 12px; line-height: 1.7; }
+
+.clip-app .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 24px 0 4px; padding: 0; list-style: none; counter-reset: step; }
+.clip-app .steps li { position: relative; display: flex; flex-direction: column; align-items: center; gap: 9px; color: var(--ui-text-muted); font-size: 12px; line-height: 1.6; text-align: center; }
+.clip-app .steps li::before { position: relative; z-index: 1; display: grid; place-items: center; counter-increment: step; content: counter(step); width: 28px; height: 28px; border-radius: 50%; background: var(--ui-surface-muted); color: var(--ui-text-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.clip-app .steps li:not(:last-child)::after { position: absolute; left: calc(50% + 18px); right: calc(-50% + 18px); top: 14px; height: 1px; background: var(--ui-border-strong); content: ""; }
+.clip-app .steps li[data-active="true"] { color: var(--ui-text); font-weight: 500; }
+.clip-app .steps li[data-active="true"]::before { background: var(--ui-accent); color: white; }
+.clip-app .steps li[data-done="true"]::before { content: "✓"; background: var(--ui-accent); color: white; }
+.clip-app .steps li[data-done="true"]::after { background: var(--ui-accent); }
+.clip-app .clip-footer { padding: 8px 32px; border-top: 1px solid var(--ui-border); }
+.clip-app [hidden] { display: none !important; }
+.clip-app .save-content-panel:has(> #saveFormSummary:not([hidden])) { border-top: 1px solid var(--ui-border); }
+.clip-app .save-content-panel:not([open]) { padding-top: 8px; padding-bottom: 8px; }
+.clip-app .save-content-panel[open] > #saveFormSummary:not([hidden]) { margin-bottom: 16px; }
+.clip-app .save-action-area:has(#save[hidden]):not(:has(#saveFeedback:not([hidden]))) { display: none; }
+
+@media (max-width: 600px) {
+  .clip-app { width: calc(100% - 24px); margin: 16px auto; border-radius: 12px; }
+  .clip-app .clip-header { min-height: 76px; padding: 18px 20px; padding-right: 136px; gap: 10px; }
+  .clip-app .topbar-copy { display: grid; gap: 1px; }
+  .clip-app h1 { font-size: 18px; }
+  .clip-header-context { border: 0; padding: 0; font-size: 12px; }
+  .clip-header-icon { flex-basis: 36px; width: 36px; height: 36px; }
+  .clip-app #connectionPanel[data-state="connected"] { top: 21px; right: 12px; }
+  .clip-app #connectionPanel[data-state="connected"] #refreshConnection { font-size: 12px; }
+  .clip-app .workspace-panel, .clip-app #connectionPanel { padding: 24px 20px; }
+  .clip-app .article-title { font-size: 21px; }
+  .clip-app #jobPanel .panel-head h2 { font-size: 22px; }
+  .clip-app #jobTitle { font-size: 18px; }
+  .clip-app .clip-footer { padding: 8px 20px; }
 }
-
-.clip-app details[open] > .advanced-summary::after {
-  transform: rotate(225deg);
-}
-
-.clip-app .advanced-summary:hover {
-  color: var(--ui-accent);
-}
-
-.clip-app .advanced-content {
-  display: grid;
-  gap: 12px;
-  padding: 12px 0 4px;
-}
-
-.clip-app #locationPicker {
-  margin-top: 4px;
-  border-top: 1px solid var(--ui-border);
-  padding-top: 8px;
-}
-
-.clip-app #resolveTarget,
-.clip-app #loadSpaces,
-.clip-app #moreNodes,
-.clip-app #copyAgentPrompt,
-.clip-app #copyInstall {
-  justify-self: start;
-}
-
-.clip-app #connectionPanel {
-  padding: 18px 24px;
-}
-
-.clip-app #connectionPanel .panel-head {
-  margin-bottom: 6px;
-}
-
-.clip-app #connectionPanel .status {
-  margin: 0;
-}
-
-.clip-app #connectionPanel[data-state="connected"] {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px 20px;
-  align-items: center;
-}
-
-.clip-app #connectionPanel[data-state="connected"] .panel-head {
-  margin-bottom: 0;
-}
-
-.clip-app #connectionPanel[data-state="connected"] .panel-head h2 {
-  color: var(--ui-success);
-  font-size: 13px;
-}
-
-.clip-app #connectionPanel[data-state="connected"] .status {
-  grid-column: 1;
-  padding: 0;
-  color: var(--ui-text-muted);
-  background: transparent;
-  font-size: 12px;
-}
-
-.clip-app #connectionPanel[data-state="connected"] .actions {
-  grid-column: 2;
-  grid-row: 1;
-  margin-top: 0;
-}
-
-.clip-app #connectionPanel[data-state="connected"] #refreshConnection {
-  min-height: 36px;
-  padding: 7px 12px;
-  font-size: 12px;
-}
-
-.clip-app #authLink {
-  display: inline-block;
-  margin-top: 12px;
-  font-size: 13px;
-}
-
-.clip-app #setup {
-  margin-top: 16px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ui-border);
-}
-
-.clip-app .save-action-area {
-  display: grid;
-  gap: 10px;
-  margin-top: 20px;
-}
-
-.clip-app .save-button {
-  width: 100%;
-  min-height: 46px;
-  margin: 0;
-  font-size: 14px;
-}
-
-.clip-app #saveFeedback {
-  margin: 0;
-}
-
-.clip-app #jobPanel .panel-head h2 {
-  font-size: 17px;
-}
-
-.clip-app #jobTitle,
-.clip-app #jobDetailStatus {
-  overflow-wrap: anywhere;
-}
-
-.clip-app #jobDetails {
-  margin-top: 16px;
-  padding-top: 10px;
-  border-top: 1px solid var(--ui-border);
-}
-
-.clip-app .job-progress {
-  margin: 20px 0 16px;
-}
-
-.clip-app .job-heading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.clip-app .completion-icon {
-  display: flex;
-  flex: none;
-  color: var(--ui-success);
-}
-
-.clip-app .completion-summary {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 20px;
-  margin: 16px 0 20px;
-  padding: 14px 16px;
-  border-radius: var(--ui-radius);
-  background: var(--ui-success-soft);
-  color: var(--ui-success);
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.clip-app .completion-duration {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
-.clip-app #completionTime {
-  font-size: 16px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.clip-app .progress-heading {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 4px 16px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-
-.clip-app .progress-heading strong {
-  font-weight: 600;
-}
-
-.clip-app #progressCount,
-.clip-app .progress-timing {
-  font-variant-numeric: tabular-nums;
-  color: var(--ui-text-muted);
-}
-
-.clip-app #progressBar {
-  display: block;
-  appearance: none;
-  width: 100%;
-  height: 6px;
-  border: 0;
-  border-radius: 3px;
-  overflow: hidden;
-  background: var(--ui-border);
-  accent-color: var(--ui-accent);
-}
-
-.clip-app #progressBar::-webkit-progress-bar {
-  background: var(--ui-border);
-}
-
-.clip-app #progressBar::-webkit-progress-value {
-  background: var(--ui-accent);
-}
-
-.clip-app #progressBar:indeterminate::-webkit-progress-bar {
-  background: var(--ui-accent-soft);
-  animation: progress-wait 1.8s ease-in-out infinite alternate;
-}
-
-.clip-app .job-progress[data-waiting="true"] #progressBar::-webkit-progress-bar {
-  animation: none;
-}
-
-@keyframes progress-wait {
-  to { background: var(--ui-border-strong); }
-}
-
-.clip-app .progress-timing {
-  margin: 8px 0 0;
-}
-
-.clip-app .progress-notice {
-  margin: 10px 0 0;
-  color: var(--ui-accent);
-}
-
-.clip-app .job-progress[data-attention="true"] .progress-notice {
-  color: var(--ui-danger);
-}
-
-.clip-app #steps {
-  margin: 16px 0;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .clip-app #progressBar:indeterminate::-webkit-progress-bar {
-    animation: none;
-  }
-}
-
-.clip-app #resultLink {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0;
-}
-
-.clip-app #endTask {
-  color: var(--ui-danger);
-}
-
-.clip-app .command {
-  display: block;
-  margin: 0;
-  padding: 14px;
-  border: 1px solid var(--ui-border);
-  border-radius: 8px;
-  color: var(--ui-text);
-  background: var(--ui-surface-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.75;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: all;
-}
-
-.clip-app .setup-list {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding-left: 20px;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  line-height: 1.8;
-}
-
-.clip-app .node-list {
-  display: grid;
-  gap: 6px;
-  max-height: 310px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  overflow-y: auto;
-}
-
-.clip-app .node-list button {
-  width: 100%;
-  text-align: left;
-}
-
-.clip-app .node-list:empty::after {
-  content: "尚未加载页面，或此位置没有子页面。";
-  padding: 14px 0;
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.clip-app .steps {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  counter-reset: step;
-}
-
-.clip-app .steps li {
-  padding: 10px 0;
-  border-top: 2px solid var(--ui-border);
-  color: var(--ui-text-muted);
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.clip-app .steps li::before {
-  counter-increment: step;
-  content: counter(step) ". ";
-  font-variant-numeric: tabular-nums;
-}
-
-.clip-app .steps li[data-active="true"] {
-  border-color: var(--ui-accent);
-  color: var(--ui-accent);
-  font-weight: 600;
-}
-
-.clip-app .steps li[data-done="true"] {
-  border-color: var(--ui-success);
-  color: var(--ui-success);
-}
-
-.clip-app .clip-footer {
-  padding: 0 4px;
-}
-
-.clip-app [hidden] {
-  display: none !important;
-}
-
-@media (max-width: 560px) {
-  .clip-app {
-    padding: 24px 16px 32px;
-    gap: 14px;
-  }
-
-  .clip-app h1 {
-    font-size: 24px;
-  }
-
-  .clip-app .workspace-panel,
-  .clip-app #connectionPanel {
-    padding: 18px;
-  }
-
-  .clip-app .article-title {
-    font-size: 19px;
-  }
-
-  .clip-app .steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 16px;
-  }
-}
-
-@media (max-width: 380px) {
-  .clip-app {
-    padding-right: 12px;
-    padding-left: 12px;
-  }
-
-  .clip-app .clip-header {
-    gap: 10px;
-  }
-
-  .clip-app .clip-header-icon {
-    flex-basis: 38px;
-    width: 38px;
-    height: 38px;
-  }
-
-  .clip-app h1 {
-    font-size: 22px;
-  }
-
-  .clip-app .workspace-panel,
-  .clip-app #connectionPanel {
-    padding: 16px;
-  }
-
-  .clip-app #connectionPanel[data-state="connected"] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .clip-app #connectionPanel[data-state="connected"] .actions {
-    grid-column: 1;
-    grid-row: auto;
-    margin-top: 8px;
-  }
-
-  .clip-app .actions .button {
-    flex: 1 1 auto;
-  }
-}
-
-.clip-app .save-content-panel:not([open]) {
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.clip-app .save-content-panel[open] > #saveFormSummary:not([hidden]) {
-  margin-bottom: 16px;
-}
-
-.clip-app .save-action-area:has(#save[hidden]):not(:has(#saveFeedback:not([hidden]))) {
-  display: none;
+@media (max-width: 360px) {
+  .clip-app { width: calc(100% - 16px); margin: 8px auto; }
+  .clip-app .clip-header { padding-left: 16px; padding-right: 116px; gap: 8px; }
+  .clip-app #connectionPanel[data-state="connected"] { right: 8px; }
+  .clip-app #connectionPanel[data-state="connected"] #refreshConnection { gap: 6px; padding: 7px 4px; }
+  .clip-app .workspace-panel, .clip-app #connectionPanel { padding: 20px 16px; }
+  .clip-app .clip-footer { padding: 8px 16px; }
+  .clip-app .steps li { font-size: 11px; }
+  .clip-app .actions .button { flex: 1 1 auto; }
 }

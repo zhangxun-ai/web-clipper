@@ -54,17 +54,22 @@ const CREATION_RESTART_ERRORS = new Set(["CREATE_UNCERTAIN", "CREATE_RECOVERY_UN
 function showConnection(phase, message) {
   connectionPhase = phase;
   $("connectionPanel").dataset.state = phase;
-  $("connectionHeading").textContent = phase === "connected" ? "飞书已连接" : "连接飞书";
+  $("connectionHeading").textContent = phase === "connected" ? "飞书已连接" : phase === "setup" ? "首次连接飞书" : "连接飞书";
+  const unsupportedPlatform = connectorEnvironment.os !== "mac" && phase === "setup";
+  $("useLocalExport").hidden = !unsupportedPlatform;
+  $("connectorSetupHint").hidden = unsupportedPlatform;
   $("connect").hidden = phase !== "needs_auth";
   $("connect").textContent = "登录飞书";
   $("setup").hidden = phase !== "setup";
   $("setup").open = phase === "setup";
-  $("refreshConnection").textContent = phase === "connected" ? "刷新连接" : "重新检测";
+  $("refreshConnection").textContent = phase === "connected" ? "飞书已连接" : "重新检测";
+  $("refreshConnection").title = phase === "connected" ? "重新检测飞书连接" : "";
+  $("refreshConnection").hidden = unsupportedPlatform;
   if (phase !== "authorizing") {
     $("authLink").hidden = true;
     $("finishAuth").hidden = true;
   }
-  status("connectionStatus", message, phase === "connected" ? "ready" : ["setup", "error", "needs_auth"].includes(phase) ? "error" : "loading");
+  status("connectionStatus", message, phase === "connected" ? "ready" : ["error", "needs_auth"].includes(phase) ? "error" : "loading");
   $("connectionStatus").hidden = phase === "connected";
   updateSaveButton();
 }
@@ -182,7 +187,7 @@ function retryLabel(job) {
 
 function retryHint(job) {
   if (CREATION_RESTART_ERRORS.has(job.errorCode)) return "点击重新保存即可继续，已读取的图文会复用。";
-  if (job.errorCode === "UNSUPPORTED_CONTENT") return "当前内容需要插件支持后才能完整保存。";
+  if (job.errorCode === "UNSUPPORTED_CONTENT") return "当前内容需要插件支持，或原文已调整后重新读取；重试不会跳过不支持的内容。";
   if (isContentFailure(job) && job.stage === "ready" && !job.copy?.token) return "重新读取会使用当前网页内容；正文读取成功后才会创建文档。";
   if (isContentFailure(job) && job.stage === "collecting") return "图片尚未读取完整；重试会继续读取图片。";
   return `${preservedProgress(job)}重试会继续这次保存。`;
@@ -195,16 +200,18 @@ function updateSaveButton() {
   const active = Boolean(job && (latestState.running || job.autoRun));
   const paused = Boolean(job && !active && !["complete", "abandoned"].includes(job.stage));
   const form = $("saveForm");
-  if (form.dataset.complete !== String(alreadySaved)) {
-    form.open = !alreadySaved;
-    form.dataset.complete = String(alreadySaved);
+  const collapsed = alreadySaved || active;
+  if (form.dataset.collapsed !== String(collapsed)) {
+    form.open = !collapsed;
+    form.dataset.collapsed = String(collapsed);
   }
-  $("saveFormSummary").hidden = !alreadySaved;
-  $("save").hidden = alreadySaved;
+  form.hidden = connectorEnvironment.os !== "mac" && connectionPhase === "setup";
+  $("saveFormSummary").hidden = !collapsed;
+  $("save").hidden = collapsed;
   $("save").disabled = connectionPhase !== "connected" || uiBusy || active || !source || !selectedTarget;
   $("save").textContent = alreadySaved ? "在飞书中打开" : active ? (latestState.queued ? "已加入保存队列" : "正在后台保存…")
     : paused ? retryLabel(job) : "保存到飞书";
-  $("saveHint").hidden = alreadySaved;
+  $("saveHint").hidden = collapsed;
   $("saveHint").textContent = alreadySaved ? ""
     : paused ? retryHint(job)
     : "读取图文时请保持原网页打开，完成后会通知你。";
@@ -377,7 +384,8 @@ function renderJob(state) {
     renderCompletion(null);
     return;
   }
-  $("jobTitle").textContent = `${job.title || job.source.url} → ${job.target.spaceName ? `${job.target.spaceName} / ` : ""}${job.target.title}`;
+  $("jobTitle").textContent = job.title || job.source.url;
+  $("jobDestination").textContent = `${job.target.spaceName ? `${job.target.spaceName} / ` : ""}${job.target.title}`;
   const descriptions = {
     ready: "正在读取原文结构并确认目标位置…", copying: "正在恢复已有的副本任务…",
     collecting: "正在读取原文图片…",
@@ -398,13 +406,15 @@ function renderJob(state) {
   const completed = job.stage === "complete";
   const abandoned = job.stage === "abandoned";
   const paused = !completed && !abandoned && !state.running && !job.autoRun;
+  $("jobPanel").dataset.state = completed ? "complete" : abandoned ? "abandoned" : paused ? "paused" : "saving";
+  $("steps").hidden = completed || abandoned;
   $("jobHeading").textContent = completed ? "已保存到飞书" : abandoned ? "已停止保存" : paused ? "这篇文章暂未保存完成" : "正在后台保存";
   const message = completed ? "保存成功，已核对图文与位置。" : abandoned ? `已停止保存。${preservedProgress(job)}` : state.queued
     ? `已加入保存队列${state.queuePosition ? `，排在第 ${state.queuePosition} 位` : ""}。可以关闭此页，完成后会通知你。`
-    : (autoRetry || job.moveRecovering && job.autoRun) ? "正在自动完成保存。可以关闭此页，完成后会通知你。"
+    : (autoRetry || job.moveRecovering && job.autoRun) ? `正在自动完成保存。可以关闭此页，完成后会通知你。${["ready", "collecting"].includes(job.stage) ? "读取完成前请保持原网页打开。" : ""}`
     : paused ? failureMessage(job) : ["ready", "collecting"].includes(job.stage)
       ? "正在读取图文，请保持原网页打开。完成后会通知你。"
-      : "可以关闭此页，保存完成后会通知你。";
+      : "图文已读取，可以关闭原网页和此页，完成后会通知你。";
   status("jobStatus", message, paused ? "error" : completed ? "ready" : "loading");
   const stages = { ready: 0, collecting: 0, importing: 1, copying: 1, copied: 2, moving: 2, pending: 2, move_failed: 2, verifying: 3, complete: 4, abandoned: -1 };
   Array.from($("steps").children).forEach((item, index) => {
@@ -601,7 +611,7 @@ $("useParent").addEventListener("click", () => withUi(async () => {
   targetNeedsRemember = true;
   await confirmTarget();
 }));
-$("save").addEventListener("click", () => withUi(async () => {
+async function submitSave() {
   if (!selectedTarget) throw new Error("请先确认保存位置。");
   $("saveFeedback").hidden = true;
   const job = currentJob();
@@ -618,7 +628,8 @@ $("save").addEventListener("click", () => withUi(async () => {
     spaceName: selectedTarget.spaceName, expectedSpaceId: selectedTarget.spaceId,
     sourceTabId: Number(new URLSearchParams(location.search).get("sourceTabId")) || undefined });
   renderJob(state);
-}, "saveFeedback"));
+}
+$("save").addEventListener("click", () => withUi(submitSave, "saveFeedback"));
 $("resume").addEventListener("click", () => withUi(async () => {
   const job = currentJob();
   if (!job) return;
@@ -628,6 +639,14 @@ $("endTask").addEventListener("click", () => withUi(async () => {
   if (!window.confirm("结束此任务会保留已创建的副本和记录，不会撤销飞书正在处理的操作。若结果尚不明确，再次剪存可能生成另一份文档。确定结束？")) return;
   renderJob(await request("end", { jobId: latestState.job?.id }));
 }));
+$("useLocalExport").addEventListener("click", async () => {
+  const params = new URLSearchParams(location.search);
+  params.set("destination", "local");
+  params.delete("jobId");
+  params.delete("requestId");
+  params.delete("target");
+  await chrome.tabs.create({ url: new URL(`popup.html?${params}`, location.href).href });
+});
 $("connect").addEventListener("click", () => withUi(async () => {
   // Another tab may have completed login since this page was opened. Probe
   // the existing session before asking the user to authorize again.
@@ -699,6 +718,14 @@ $("copyAgentPrompt").addEventListener("click", async () => {
 async function init() {
   setupConnectorInstructions();
   const params = new URLSearchParams(location.search);
+  if (params.has("autoStart")) {
+    // This flag carries the popup's one-time confirmation. Consume it even if
+    // setup is incomplete or the request already exists, so it cannot leak
+    // into an edited article or a later reload.
+    const url = new URL(location.href);
+    url.searchParams.delete("autoStart");
+    history.replaceState(null, "", url.href);
+  }
   $("sourceUrl").value = params.get("source") || "";
   $("sourceSettings").open = !currentSourceUrl();
   updateSourceTitle();
@@ -714,10 +741,22 @@ async function init() {
   stateSyncError = "";
   rememberedTarget = state.target || null;
   $("targetUrl").value = params.get("target") || state.target?.url || "";
-  targetNeedsRemember = Boolean(params.get("target"));
+  targetNeedsRemember = Boolean(params.get("target")) && params.get("autoStart") !== "1";
   $("destinationSettings").open = !$("targetUrl").value;
   renderJob(state);
   await checkConnection();
+  if (params.get("editTarget") === "1") {
+    $("saveForm").open = true;
+    $("destinationSettings").open = true;
+    $("targetUrl").focus?.();
+  } else if (params.get("autoStart") === "1" && params.get("target") && connectionPhase === "connected"
+    && selectedTarget && selectedTarget.url === clipApi.parseDocumentUrl(params.get("target"), true).url
+    && currentSourceUrl() && !currentJob()) {
+    // Auto-save only to the exact location confirmed in the popup. A default
+    // selected by another tab after the click must not redirect this request.
+    // The request ID remains durable if a start response is lost.
+    await withUi(submitSave, "saveFeedback");
+  }
 }
 
 init().catch(connectionError);

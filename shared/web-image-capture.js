@@ -17,17 +17,7 @@
       // use public CORS and must not receive this page's credentials.
       const response = await fetch(parsed.href, { credentials, signal: controller.signal });
       if (!response.ok) throw new Error(`网页图片读取失败（HTTP ${response.status}）。`);
-      const blob = await response.blob();
-      if (!/^image\/(png|jpeg|gif|webp|bmp)$/i.test(blob.type) || !blob.size || blob.size > 20 * 1024 * 1024) {
-        throw new Error("网页图片为空、格式暂不支持或超过 20 MiB，未创建缺图文档。");
-      }
-      const bitmap = await createImageBitmap(blob);
-      const pixelWidth = bitmap.width, pixelHeight = bitmap.height;
-      bitmap.close();
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      let binary = "";
-      for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-      return { mimeType: blob.type, size: bytes.length, pixelWidth, pixelHeight, contentBase64: btoa(binary) };
+      return await scope.ImageAsset.read(await response.blob());
     } catch (error) {
       if (error.name === "AbortError") throw new Error("网页图片读取超时，请稍后继续；已保存的图片会保留。");
       if (error.name === "TypeError") throw new Error("网站暂不允许读取该图片，请保持原网页打开并稍后重试。");

@@ -1,13 +1,13 @@
 :root {
   color-scheme: light;
-  --ui-bg: #f6f5f2;
+  --ui-bg: #f8f6f2;
   --ui-surface: #ffffff;
   --ui-surface-muted: #f7f6f3;
-  --ui-text: #292722;
+  --ui-text: #232320;
   --ui-text-muted: #706b63;
-  --ui-border: #e6e2da;
+  --ui-border: #e5e0d8;
   --ui-border-strong: #c9c2b5;
-  --ui-accent: #965415;
+  --ui-accent: #995516;
   --ui-accent-hover: #78400f;
   --ui-accent-soft: #faf0e2;
   --ui-success: #246344;

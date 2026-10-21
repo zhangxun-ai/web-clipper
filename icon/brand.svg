@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>网页剪存</title>
+  <rect width="128" height="128" rx="26" fill="#965415"/>
+  <!-- Rear page: its open lower-left edge preserves the separation at 16px. -->
+  <path d="M43 30V25a5 5 0 0 1 5-5h41a6 6 0 0 1 4.2 1.8l12 12A6 6 0 0 1 107 38v47a5 5 0 0 1-5 5h-4V52a9 9 0 0 0-2.6-6.4L82.6 32.6A9 9 0 0 0 76.2 30H43Z" fill="#fff"/>
+  <!-- Front page: folded corner and two content lines. -->
+  <path d="M31 36h40a2 2 0 0 1 2 2v9a5 5 0 0 0 5 5h9a2 2 0 0 1 2 2v49a5 5 0 0 1-5 5H31a5 5 0 0 1-5-5V41a5 5 0 0 1 5-5Z" fill="#fff"/>
+  <path d="M42 69h30M42 86h30" stroke="#965415" stroke-width="7" stroke-linecap="round"/>
+</svg>

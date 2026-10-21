@@ -105,6 +105,97 @@ test("rejects webpage content scripts, other extensions, and unrelated extension
   assert.equal(svc.calls.length, 0);
 });
 
+test("popup overview reads jobs and destination with exactly one fixed native status request", async () => {
+  const svc = service();
+  await new Promise(setImmediate);
+  const jobs = [
+    { id: "active", stage: "importing", autoRun: true },
+    { id: "queued", stage: "ready", autoRun: true },
+    { id: "paused", stage: "moving", autoRun: false },
+    { id: "complete", stage: "complete", autoRun: true },
+    { id: "abandoned", stage: "abandoned", autoRun: false }
+  ];
+  const target = { title: "默认目录", url: "https://my.feishu.cn/wiki/Parent" };
+  Object.assign(svc.store, { feishuWikiClipJobs: jobs, feishuWikiClipTarget: target });
+  const before = structuredClone(svc.store);
+  const result = await svc.send({ action: "overview", operation: "authorize_start", params: { injected: true }, reconcile: true },
+    { id: svc.id, url: svc.base + "popup.html?view=jobs#recent" });
+  assert.equal(result.ok, true, result.error);
+  assert.deepEqual(structuredClone(result.data), { jobs, target, pendingCount: 2,
+    connection: { state: "connected", message: "本机连接器已连接。", code: "" } });
+  assert.deepEqual(structuredClone(svc.calls), [{ host: "com.feishu.clipper", message: { action: "status", params: {} } }]);
+  assert.deepEqual(svc.store, before, "overview must not persist, reconcile or acknowledge tasks");
+  assert.deepEqual(svc.openedTabs, []);
+});
+
+test("overview is exclusive to this extension popup and does not widen popup write access", async () => {
+  const svc = service();
+  for (const sender of [
+    { id: svc.id, url: "https://my.feishu.cn/docx/ABC", tab: { id: 10 }, frameId: 0 },
+    { id: svc.id, url: "https://example.com/popup.html" },
+    { id: "other", url: svc.base + "popup.html" },
+    { id: svc.id, url: svc.base + "popup.html.evil" },
+    { id: svc.id, url: svc.base + "nested/popup.html" },
+    { id: svc.id, url: svc.base + "feishu-save.html" },
+    { id: svc.id }
+  ]) {
+    assert.equal((await svc.send({ action: "overview" }, sender)).ok, false);
+  }
+  for (const action of ["native", "state", "start", "resume", "end", "remember_target", "acknowledge_completion"]) {
+    const result = await svc.send({ action, operation: "authorize_start" }, { id: svc.id, url: svc.base + "popup.html" });
+    assert.equal(result.ok, false, action);
+  }
+  assert.equal(svc.calls.length, 0);
+  // The existing dedicated save page still retains its established read route.
+  assert.equal((await svc.send({ action: "native", operation: "status" })).ok, true);
+  assert.equal(svc.calls.length, 1);
+});
+
+test("popup overview prefers current queue records over legacy history", async () => {
+  const svc = service();
+  await new Promise(setImmediate);
+  const latest = { id: "same-task", stage: "complete", title: "最新完成记录", autoRun: false };
+  Object.assign(svc.store, { feishuWikiClipJobs: [latest],
+    feishuWikiClipHistory: [{ ...latest, stage: "moving", title: "旧记录" }] });
+  const result = await svc.send({ action: "overview" }, { id: svc.id, url: svc.base + "popup.html" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(structuredClone(result.data.jobs), [latest]);
+});
+
+test("popup overview preserves local records and accurately classifies native status failures", async () => {
+  const states = {
+    AUTH_REQUIRED: "needs_auth", MISSING_SCOPE: "needs_auth", AUTH_EXPIRED: "needs_auth", AUTH_INCOMPLETE: "needs_auth",
+    NATIVE_UNAVAILABLE: "setup", CLI_UNAVAILABLE: "setup", NOT_CONFIGURED: "setup",
+    CLI_NETWORK: "error", PERMISSION_DENIED: "error", UNKNOWN: "error"
+  };
+  for (const [code, state] of Object.entries(states)) {
+    const svc = service();
+    await new Promise(setImmediate);
+    const jobs = [{ id: "kept", stage: "moving", autoRun: false, error: "等待检查" }];
+    const target = { title: "保留目录" };
+    Object.assign(svc.store, { feishuWikiClipJobs: jobs, feishuWikiClipTarget: target });
+    let requests = 0;
+    svc.chrome.runtime.sendNativeMessage = (_host, message, callback) => {
+      requests += 1;
+      assert.equal(message.action, "status");
+      if (code === "NATIVE_UNAVAILABLE") {
+        svc.chrome.runtime.lastError = { message: "Native host not found" };
+        callback();
+        delete svc.chrome.runtime.lastError;
+      } else callback({ ok: false, code, error: "连接检测失败" });
+    };
+    const result = await svc.send({ action: "overview" }, { id: svc.id, url: svc.base + "popup.html" });
+    assert.equal(result.ok, true, code);
+    assert.deepEqual(structuredClone(result.data.jobs), jobs);
+    assert.deepEqual(structuredClone(result.data.target), target);
+    assert.equal(result.data.pendingCount, 0);
+    assert.equal(result.data.connection.state, state, code);
+    assert.equal(result.data.connection.code, code);
+    assert.ok(result.data.connection.message);
+    assert.equal(requests, 1);
+  }
+});
+
 test("web capture uses the selected source tab and a CORS fallback requires an existing host grant", async () => {
   let dependencies;
   const svc = service({ runContentJob: async (_job, deps) => { dependencies = deps; } });

@@ -68,7 +68,7 @@
     const tab = await sourceTab(source, preferredId);
     try {
       await chrome.scripting.executeScript({ target: { tabId: tab.id },
-        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "shared/web-feishu-blocks.js", "content-scripts/feishu-exporter.js"] });
+        files: ["shared/scys-course-utils.js", "shared/web-markdown-utils.js", "shared/web-feishu-blocks.js", "shared/image-asset.js", "content-scripts/feishu-exporter.js"] });
       return await callPage(tab.id, "web", { sourceUrl: source.url });
     } catch (error) {
       if (/Cannot access|permission|host permission/i.test(error.message)) {
@@ -81,7 +81,7 @@
   async function captureImage(source, entry, preferredId) {
     if (source.type === "web") {
       const tab = await sourceTab(source, preferredId);
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["shared/web-image-capture.js"] });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["shared/image-asset.js", "shared/web-image-capture.js"] });
       try {
         return await callPage(tab.id, "web-image", { sourceUrl: source.url, url: entry.url });
       } catch (error) {
@@ -110,7 +110,7 @@
       tab = await chrome.tabs.get(tab.id);
     }
     if (!matchesSource(tab)) throw new Error("源文档页面已跳转，请先在浏览器中打开原文。");
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["shared/feishu-image-capture.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["shared/image-asset.js", "shared/feishu-image-capture.js"] });
     return callPage(tab.id, "feishu-image", { sourceUrl: source.url, blockId: entry.block_id,
       token: entry.token, width: entry.width, height: entry.height });
   }
@@ -150,7 +150,7 @@
     const jobs = [], positions = new Map();
     // Preserve legacy history and its latest current-job snapshot during the
     // first migration. Subsequent writes keep these compatibility views in sync.
-    for (const job of [...(state[JOBS_KEY] || []), ...(state[HISTORY_KEY] || []), state[JOB_KEY]]) {
+    for (const job of [...(state[HISTORY_KEY] || []), ...(state[JOBS_KEY] || []), state[JOB_KEY]]) {
       if (!job?.id) continue;
       if (positions.has(job.id)) jobs[positions.get(job.id)] = job;
       else { positions.set(job.id, jobs.length); jobs.push(job); }
@@ -200,6 +200,26 @@
       target: queue.target, running: Boolean(job && (running?.jobId === job.id || autoEligible(job))),
       queued, queuePosition: queued ? pending.filter(item => item.id !== running?.jobId).findIndex(item => item.id === job.id) + 1 : 0,
       activeJobId: running?.jobId || "", pendingCount: pending.length, jobs: queue.jobs };
+  }
+
+  async function overview() {
+    await initialized;
+    let connection;
+    try {
+      // status checks the installed connector, not remote authorization. Never
+      // expose the general native bridge or begin authorization from the popup.
+      await nativeCall("status");
+      connection = { state: "connected", message: "本机连接器已连接。", code: "" };
+    } catch (error) {
+      const auth = ["AUTH_REQUIRED", "MISSING_SCOPE", "AUTH_EXPIRED", "AUTH_INCOMPLETE"].includes(error.code);
+      const setup = ["NATIVE_UNAVAILABLE", "CLI_UNAVAILABLE", "NOT_CONFIGURED"].includes(error.code);
+      connection = { state: auth ? "needs_auth" : setup ? "setup" : "error",
+        message: error.message || "暂时无法检测本机飞书连接。", code: error.code || "" };
+    }
+    // A missing connector must not hide local history or the saved destination.
+    const queue = await storedQueue();
+    return { jobs: queue.jobs, target: queue.target,
+      pendingCount: queue.jobs.filter(autoEligible).length, connection };
   }
 
   function autoEligible(job) {
@@ -693,6 +713,15 @@
       return true;
     }
     if (message?.type !== "feishu-clip") return false;
+    if (message.action === "overview") {
+      if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL("popup.html")) {
+        sendResponse({ ok: false, error: "任务概览只能从插件弹出页读取。" });
+        return false;
+      }
+      overview().then(data => sendResponse({ ok: true, data }))
+        .catch(error => sendResponse({ ok: false, error: error.message || "读取任务概览失败。" }));
+      return true;
+    }
     // Only our dedicated extension page can access the native host; content
     // scripts and other extensions cannot turn this bridge into a write proxy.
     if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL("feishu-save.html")) {

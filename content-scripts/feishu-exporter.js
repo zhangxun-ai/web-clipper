@@ -1,9 +1,10 @@
 (function () {
   // Dynamic injection can happen again when the user opens the save page.
   const previousCapture = globalThis.FeishuWebCapture;
-  if (previousCapture?.version === 6) return;
+  if (previousCapture?.version === 7) return;
   const MESSAGE_GET_PAGE_INFO = "feishu-export:get-page-info";
   const MESSAGE_EXPORT_DOCUMENT = "feishu-export:export-document";
+  const MESSAGE_EXPORT_DOCUMENT_V2 = "feishu-export:export-document-v2";
   const MESSAGE_GET_SCYS_COURSE_OUTLINE = "feishu-export:get-scys-course-outline";
   const MESSAGE_GET_WECHAT_HISTORY_SEED = "feishu-export:get-wechat-history-seed";
   const MESSAGE_GET_WECHAT_MP_LOGIN_STATUS = "feishu-export:get-wechat-mp-login-status";
@@ -26,7 +27,7 @@
   const WECHAT_MP_HISTORY_SCAN_LIMIT = 500;
   const WECHAT_MP_PAGE_DELAY_MS = 250;
   const FEISHU_API_TIMEOUT_MS = 30000;
-  const FEISHU_IMAGE_FETCH_TIMEOUT_MS = 5000;
+  const FEISHU_IMAGE_FETCH_TIMEOUT_MS = 30000;
   const GOOGLE_DOCS_EXPORT_TIMEOUT_MS = 120000;
   let googleDocsTrustedHtmlPolicy = null;
   const TYPE_MAP = {
@@ -183,28 +184,30 @@
     ".mask"
   ].join(",");
 
-  // Upgrade capture in already-open tabs without registering a second export
-  // listener. The export protocol is unchanged; clipping reads the global API.
-  if (!previousCapture) chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || ![
+  // Pre-v7 listeners close over the old exporter. A new message name upgrades
+  // local export without racing that old listener for the same response.
+  const exportMessages = previousCapture ? [MESSAGE_EXPORT_DOCUMENT_V2] : [
       MESSAGE_GET_PAGE_INFO,
       MESSAGE_EXPORT_DOCUMENT,
+      MESSAGE_EXPORT_DOCUMENT_V2,
       MESSAGE_GET_SCYS_COURSE_OUTLINE,
       MESSAGE_GET_WECHAT_HISTORY_SEED,
       MESSAGE_GET_WECHAT_MP_LOGIN_STATUS,
       MESSAGE_RESOLVE_WECHAT_MP_HISTORY
-    ].includes(message.type)) {
+    ];
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message || !exportMessages.includes(message.type)) {
       return false;
     }
 
-    handleMessage(message)
+    globalThis.FeishuWebCapture.handleMessage(message)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((error) => sendResponse({ ok: false, error: error.message || "处理失败" }));
 
     return true;
   });
 
-  globalThis.FeishuWebCapture = { version: 6, snapshot: captureWebSnapshot };
+  globalThis.FeishuWebCapture = { version: 7, snapshot: captureWebSnapshot, handleMessage };
 
   async function captureWebSnapshot() {
     if (!globalThis.WebFeishuBlocks?.fromRoot) throw new Error("网页剪存组件未加载，请刷新扩展和原网页后重试。");
@@ -341,7 +344,7 @@
       return getPageInfo();
     }
 
-    if (message.type === MESSAGE_EXPORT_DOCUMENT) {
+    if (message.type === MESSAGE_EXPORT_DOCUMENT || message.type === MESSAGE_EXPORT_DOCUMENT_V2) {
       return exportDocument(message.format, message.options || {});
     }
 
@@ -536,11 +539,14 @@
     if (format === "markdown") {
       const clientVars = await fetchClientVars(meta.exportToken, meta.jssdkSession);
       const assets = [];
+      const localImageReferences = new Map();
       let markdownBody = await convertClientVarsToMarkdown(meta, clientVars, {
         ...options,
-        assets
+        assets,
+        localImageReferences
       });
-      markdownBody = maybeReplaceFeishuMarkdownWithDom(markdownBody);
+      markdownBody = maybeReplaceFeishuMarkdownWithDom(markdownBody,
+        options.localImageAssets === true && options.includeImages !== false ? localImageReferences : null);
       if (options.includeImages === false) {
         markdownBody = stripMarkdownImages(markdownBody);
       }
@@ -550,7 +556,9 @@
         filename: buildFilename(meta.title, "md"),
         mimeType: "text/markdown;charset=utf-8",
         content: markdown,
-        assets
+        assets,
+        sourceUrl: location.href,
+        title: meta.title
       };
     }
 
@@ -573,12 +581,12 @@
     };
   }
 
-  function maybeReplaceFeishuMarkdownWithDom(clientVarsMarkdown) {
+  function maybeReplaceFeishuMarkdownWithDom(clientVarsMarkdown, localImageReferences = null) {
     if (!hasVisibleFeishuTable()) {
       return clientVarsMarkdown;
     }
 
-    const domMarkdown = extractDocumentMarkdown();
+    let domMarkdown = extractDocumentMarkdown();
     if (!domMarkdown) {
       return clientVarsMarkdown;
     }
@@ -587,6 +595,19 @@
     const domHasTable = containsMarkdownTable(domMarkdown);
 
     if (!structuredHasTable && domHasTable) {
+      if (localImageReferences) {
+        for (const image of document.querySelectorAll(".docx-image-block img")) {
+          const blockId = image.closest("[data-record-id]")?.getAttribute("data-record-id");
+          const path = localImageReferences.get(blockId);
+          const src = image.currentSrc || image.getAttribute("src") || "";
+          if (path && src) domMarkdown = domMarkdown.split(`(${src})`).join(`(${path})`);
+        }
+        const imagePaths = markdown => [...markdown.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map(match => match[1]);
+        const expected = imagePaths(clientVarsMarkdown), actual = imagePaths(domMarkdown);
+        if (expected.length !== actual.length || expected.some((path, index) => path !== actual[index])) {
+          throw new Error("表格正文中的图片未能完整关联本地附件，已停止导出以免缺图。");
+        }
+      }
       return domMarkdown;
     }
 
@@ -624,7 +645,10 @@
 
     if (format === "markdown") {
       const clonedRoot = liveRoot.cloneNode(true);
-      await sanitizeWechatArticle(clonedRoot, { includeImages: options.includeImages !== false });
+      await sanitizeWechatArticle(clonedRoot, { includeImages: options.includeImages !== false,
+        localImageAssets: options.localImageAssets === true });
+      const imageRequests = options.localImageAssets === true && options.includeImages !== false
+        ? prepareGenericImageAssets(clonedRoot) : [];
       let markdownBody = cleanupMarkdown(convertBlock(clonedRoot, 0));
       if (options.includeImages === false) {
         markdownBody = stripMarkdownImages(markdownBody);
@@ -638,7 +662,10 @@
       return {
         filename: buildFilename(meta.title, "md"),
         mimeType: "text/markdown;charset=utf-8",
-        content: buildMarkdownDocument(meta, markdownBody)
+        content: buildMarkdownDocument(meta, markdownBody),
+        sourceUrl: location.href,
+        title: meta.title,
+        imageRequests
       };
     }
 
@@ -1823,6 +1850,7 @@
     return {
       seedUrl: location.href,
       biz,
+      username: extractWechatUsername(),
       nickname: meta.author || "",
       title: meta.title,
       publishTime: meta.publishTime || "",
@@ -1938,6 +1966,14 @@
       }
     }
 
+    return "";
+  }
+
+  function extractWechatUsername() {
+    for (const script of Array.from(document.scripts)) {
+      const match = (script.textContent || "").match(/(?:var|let|const)\s+user_name\s*=\s*["'](gh_[A-Za-z0-9]{1,64})["']/);
+      if (match) return match[1];
+    }
     return "";
   }
 
@@ -2511,12 +2547,15 @@
     for (const image of images) {
       const resolvedUrl = resolveWechatImageUrl(image);
 
+      if (includeImages && options.localImageAssets === true && !resolvedUrl) {
+        throw new Error("公众号正文图片缺少可读取地址，未生成缺图留档。");
+      }
       if (!includeImages || !resolvedUrl) {
         image.remove();
         continue;
       }
 
-      const embeddedUrl = await fetchExtensionAssetAsDataUrl(resolvedUrl);
+      const embeddedUrl = options.localImageAssets === true ? "" : await fetchExtensionAssetAsDataUrl(resolvedUrl);
       image.setAttribute("src", embeddedUrl || resolvedUrl);
       image.setAttribute("alt", buildWechatImageAlt(image));
       image.removeAttribute("data-src");
@@ -2795,38 +2834,30 @@
   }
 
   async function buildLocalImageMap(blockMap, meta, options = {}) {
-    const imageMap = extractImageMapFromDom();
+    const sourceUrl = location.href;
     const linkedMap = new Map();
     const imageBlocks = Object.entries(blockMap).filter(([, block]) => block?.data?.type === "image");
     const assets = Array.isArray(options.assets) ? options.assets : [];
-    const assetFolder = buildAssetFolderName(meta.title);
-    const fetches = [];
-
-    for (const [index, [blockId, block]] of imageBlocks.entries()) {
-      const src = imageMap.get(blockId) || buildImageUrl(blockId, block);
-      if (!src) {
-        continue;
+    // Validate every source before starting work, so a later missing token
+    // cannot leave earlier promises running without rejection handlers.
+    const sources = imageBlocks.map(([blockId, block], index) => {
+      const token = block?.data?.image?.token;
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(token || "")) {
+        throw new Error(`第 ${index + 1} 张图片缺少原图标识，已停止导出以免缺图。`);
       }
-
-      fetches.push({
-        blockId,
-        src,
-        promise: fetchImageAsAsset(src, block, assetFolder, assets.length + index + 1, options.imageFetchTimeoutMs)
-      });
-    }
-
-    const results = await Promise.all(fetches.map(async (entry) => ({
-      ...entry,
-      asset: await entry.promise
+      const src = `https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/preview/${encodeURIComponent(token)}/?preview_type=16`;
+      return { blockId, block, src };
+    });
+    const results = await Promise.all(sources.map(async (entry, index) => ({
+      blockId: entry.blockId,
+      asset: await fetchImageAsAsset(entry.src, entry.block, "assets", assets.length + index + 1, options.imageFetchTimeoutMs)
     })));
 
-    for (const { blockId, src, asset } of results) {
-      if (asset) {
-        assets.push(asset);
-        linkedMap.set(blockId, asset.path);
-      } else {
-        linkedMap.set(blockId, src);
-      }
+    if (location.href !== sourceUrl) throw new Error("源文档已跳转，已停止导出；请重新打开要保存的文档。");
+    for (const { blockId, asset } of results) {
+      assets.push(asset);
+      linkedMap.set(blockId, asset.path);
+      options.localImageReferences?.set(blockId, asset.path);
     }
 
     return linkedMap;
@@ -3514,79 +3545,35 @@
   }
 
   async function fetchImageAsAsset(src, block, assetFolder, assetIndex, timeoutMs = FEISHU_IMAGE_FETCH_TIMEOUT_MS) {
+    const controller = new AbortController();
+    let timer;
     try {
-      const response = await fetchWithTimeout(src, { credentials: "include" }, timeoutMs);
-      if (!response.ok) {
-        return null;
+      const asset = await Promise.race([
+        (async () => {
+          const response = await fetch(src, { credentials: "include", signal: controller.signal });
+          if (!response.ok) throw new Error(`图片读取失败（HTTP ${response.status}）`);
+          if (!globalThis.ImageAsset?.read) throw new Error("图片读取组件未加载，请刷新扩展和原网页后重试");
+          return globalThis.ImageAsset.read(await response.blob());
+        })(),
+        new Promise((resolve, reject) => {
+          timer = setTimeout(() => { controller.abort(); reject(new Error("原图读取超时")); },
+            Number(timeoutMs) > 0 ? Number(timeoutMs) : FEISHU_IMAGE_FETCH_TIMEOUT_MS);
+        })
+      ]);
+      const expected = block?.data?.image || {};
+      if ((Number(expected.width) > 0 && asset.pixelWidth < Number(expected.width))
+        || (Number(expected.height) > 0 && asset.pixelHeight < Number(expected.height))) {
+        throw new Error("图片服务返回的像素小于原图");
       }
-
-      const blob = await response.blob();
-      const mimeType = blob.type || guessImageMimeType(block) || "application/octet-stream";
-      const extension = getImageExtension(mimeType, block);
-      const buffer = await blob.arrayBuffer();
+      const extension = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp" }[asset.mimeType];
       return {
         path: `${assetFolder}/image-${String(assetIndex).padStart(3, "0")}.${extension}`,
-        mimeType,
-        contentBase64: arrayBufferToBase64(buffer)
+        mimeType: asset.mimeType,
+        contentBase64: asset.contentBase64
       };
     } catch (error) {
-      return null;
-    }
-  }
-
-  function buildAssetFolderName(title) {
-    return "assets";
-  }
-
-  function guessImageMimeType(block) {
-    const name = String(block?.data?.image?.name || "").toLowerCase();
-    if (name.endsWith(".jpg") || name.endsWith(".jpeg")) {
-      return "image/jpeg";
-    }
-    if (name.endsWith(".webp")) {
-      return "image/webp";
-    }
-    if (name.endsWith(".gif")) {
-      return "image/gif";
-    }
-    if (name.endsWith(".png")) {
-      return "image/png";
-    }
-    return "";
-  }
-
-  function getImageExtension(mimeType, block) {
-    const name = String(block?.data?.image?.name || "").toLowerCase();
-    const extMatch = name.match(/\.([a-z0-9]{2,5})$/);
-    if (extMatch) {
-      return extMatch[1] === "jpeg" ? "jpg" : extMatch[1];
-    }
-    if (mimeType === "image/jpeg") {
-      return "jpg";
-    }
-    if (mimeType === "image/webp") {
-      return "webp";
-    }
-    if (mimeType === "image/gif") {
-      return "gif";
-    }
-    if (mimeType === "image/png") {
-      return "png";
-    }
-    return "bin";
-  }
-
-  function arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 0x8000;
-    let binary = "";
-
-    for (let index = 0; index < bytes.length; index += chunkSize) {
-      const slice = bytes.subarray(index, index + chunkSize);
-      binary += String.fromCharCode(...slice);
-    }
-
-    return btoa(binary);
+      throw new Error(`第 ${assetIndex} 张图片未保存：${error?.message || "图片读取失败"}，未生成缺图留档。`);
+    } finally { clearTimeout(timer); }
   }
 
   function buildImageUrl(blockId, block) {
@@ -4489,7 +4476,9 @@
       __test: {
         convertBlock,
         getGenericWebMeta,
+        convertClientVarsToMarkdown,
         exportGenericWebDocument,
+        exportWechatDocument,
         prepareGenericImageAssets,
         captureWebSnapshot,
         cloneWebCaptureRoot,

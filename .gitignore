@@ -1,6 +1,11 @@
 # Local VCS metadata
 .git/
 
+# Local API credentials
+.env
+.env.*
+!.env.example
+
 # Old bundled artifacts / legacy files not part of the current MVP
 assets/
 chunks/
@@ -28,6 +33,7 @@ helper/data/
 node_modules/
 output/playwright/
 output/connector-work/
+.impeccable/review/
 
 # OS
 .DS_Store

@@ -1,12 +1,13 @@
 const assert = require("node:assert/strict"), test = require("node:test"), vm = require("node:vm"), fs = require("node:fs");
 const source = fs.readFileSync(require.resolve("../shared/feishu-image-capture.js"), "utf8");
-function fixture({ width = 3264, height = 2448, mime = "image/jpeg" } = {}) {
-  const urls = [], blob = new Blob([new Uint8Array([255, 216, 255, 1])], { type: mime });
-  const context = { URL, Uint8Array, AbortController, setTimeout, clearTimeout,
+const assetSource = fs.readFileSync(require.resolve("../shared/image-asset.js"), "utf8");
+function fixture({ width = 3264, height = 2448, mime = "image/jpeg", bytes = [255, 216, 255, 1] } = {}) {
+  const urls = [], blob = new Blob([new Uint8Array(bytes)], { type: mime });
+  const context = { URL, Blob, Uint8Array, AbortController, setTimeout, clearTimeout,
     location: new URL("https://my.feishu.cn/docx/Source"), btoa: s => Buffer.from(s, "binary").toString("base64"),
     fetch: async (url, options) => { urls.push(url); assert.equal(options.credentials, "include"); return { ok: true, blob: async () => blob }; },
     createImageBitmap: async () => ({ width, height, close() {} }) };
-  vm.runInNewContext(source, context);
+  vm.runInNewContext(assetSource, context); vm.runInNewContext(source, context);
   const request = { sourceUrl: "https://my.feishu.cn/docx/Source", blockId: "SourceBlock", token: "ImageToken", width: 3264, height: 2448 };
   return { context, request, urls, capture: context.FeishuImageCapture.capture };
 }
@@ -31,7 +32,24 @@ test("navigation away from the source blocks image capture", async () => {
   assert.equal(f.urls.length, 0);
 });
 
-test("a login or error page cannot be staged as an image", async () => {
-  const f = fixture({ mime: "text/html" });
+test("a login or error page cannot be staged as an image even with an image Content-Type", async () => {
+  const f = fixture({ mime: "image/jpeg", bytes: Buffer.from("<html>login</html>") });
   await assert.rejects(f.capture(f.request), /格式无效/);
+});
+
+test("mislabelled PNGs use byte-derived MIME without re-encoding, including an old injected reader", async () => {
+  const bytes = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82];
+  for (const mime of ["image/jpeg", "application/octet-stream", ""]) {
+    const f = fixture({ bytes, mime });
+    f.context.FeishuImageCapture = { version: 2, capture() { throw new Error("stale reader"); } };
+    vm.runInNewContext(source, f.context);
+    const asset = await f.context.FeishuImageCapture.capture(f.request);
+    assert.equal(asset.mimeType, "image/png");
+    assert.deepEqual(Buffer.from(asset.contentBase64, "base64"), Buffer.from(bytes));
+  }
+});
+
+test("recognizable but corrupt image bytes still must decode", async () => {
+  const f = fixture(); f.context.createImageBitmap = async () => { throw new Error("decode failed"); };
+  await assert.rejects(f.capture(f.request), /无法完整解码/);
 });

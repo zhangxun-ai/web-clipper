@@ -1,4 +1,4 @@
-importScripts("shared/feishu-wiki-clip.js", "shared/web-image-capture.js", "shared/feishu-clip-service.js");
+importScripts("shared/feishu-wiki-clip.js", "shared/image-asset.js", "shared/web-image-capture.js", "shared/feishu-clip-service.js", "shared/wechat-history-service.js");
 
 const MESSAGE_FETCH_ASSET = "exporter:fetch-asset";
 

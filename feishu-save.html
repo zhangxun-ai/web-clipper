@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>剪存到飞书知识库</title>
+    <title>网页剪存 · 保存到飞书</title>
     <link id="taskFavicon" rel="icon" type="image/png" href="icon/32.png">
     <link rel="stylesheet" href="popup.css">
     <link rel="stylesheet" href="feishu-save.css">
@@ -11,12 +11,8 @@
   <body>
     <main class="app clip-app">
       <header class="topbar clip-header">
-        <div class="clip-header-icon" aria-hidden="true">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h7"/><path d="M14 3v6h6L14 3Z"/><path d="M8 13h4M8 17h3m4 0h6m-3-3 3 3-3 3"/></svg>
-        </div>
-        <div class="topbar-copy">
-          <h1>保存到飞书</h1>
-        </div>
+        <img class="clip-header-icon" src="icon/brand.svg" width="40" height="40" alt="">
+        <div class="topbar-copy"><h1>网页剪存</h1><span class="clip-header-context">保存到飞书</span></div>
       </header>
 
       <section id="connectionPanel" class="panel workspace-panel" data-state="checking">
@@ -27,11 +23,12 @@
           <button id="finishAuth" class="button" type="button" hidden>已完成授权，继续</button>
           <button id="refreshConnection" class="button" type="button">重新检测</button>
         </div>
+        <button id="useLocalExport" class="button button-primary" type="button" hidden>使用本地导出</button>
         <a id="authLink" target="_blank" rel="noopener noreferrer" hidden>打开飞书授权页</a>
         <details id="setup" class="advanced-settings" hidden>
           <summary class="advanced-summary">首次连接说明</summary>
           <div class="advanced-content">
-            <p class="hint">Mac 上保存到飞书需要安装一次连接器。让 AI 助手完成安装后，已有配置和授权会自动复用，无需手动启动程序。</p>
+            <p id="connectorSetupHint" class="hint">安装连接器后，飞书授权会自动复用。</p>
             <p id="connectorPlatform" class="hint"></p>
             <div id="connectorInstallSteps" class="advanced-content" hidden>
               <label class="field-label" for="connectorBrowser">当前使用的浏览器</label>
@@ -39,7 +36,7 @@
               <p id="connectorBrowserHint" class="hint">请确认当前浏览器；使用 Dia 时请在这里选择 Dia。</p>
               <button id="copyAgentPrompt" class="button button-primary" type="button">复制安装提示词</button>
               <p class="hint">粘贴到可以操作本机的 Codex、Claude Code 或 WorkBuddy，让 AI 助手检查环境并完成安装。首次飞书配置和授权仍需你按提示操作。</p>
-              <p class="hint">完成后回到此页点击“重新检测”。</p>
+
               <details id="agentPromptPreview" class="advanced-settings">
                 <summary class="advanced-summary">查看安装提示词</summary>
                 <div class="advanced-content"><code id="agentInstallPrompt" class="command"></code></div>
@@ -63,8 +60,8 @@
           <span id="completionIcon" class="completion-icon" aria-hidden="true" hidden><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor"/><path d="m7.5 12 3 3 6-6" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           <h2 id="jobHeading">正在保存</h2>
         </div>
-        <p id="jobTitle" class="hint"></p>
-        <p id="jobStatus" class="status status-loading" role="status"></p>
+        <p id="jobTitle" class="job-article-title"></p>
+        <p id="jobDestination" class="hint job-destination"></p>
         <div id="completionSummary" class="completion-summary" role="status" hidden>
           <span id="completionDuration" class="completion-duration" hidden>总耗时 <strong id="completionTime"></strong></span>
           <span>已核对图文与位置</span>
@@ -75,29 +72,31 @@
             <span id="progressCount"></span>
           </div>
           <progress id="progressBar" aria-labelledby="progressPhase" aria-describedby="progressCount"></progress>
-          <p id="progressTiming" class="hint progress-timing"></p>
+
           <p id="progressNotice" class="hint progress-notice" role="status" hidden></p>
         </div>
         <ol class="steps" id="steps" aria-label="保存步骤">
           <li data-stage="ready">读取图文</li><li data-stage="importing">写入并核对</li><li data-stage="moving">保存到知识库</li><li data-stage="complete">确认完成</li>
         </ol>
+        <p id="jobStatus" class="status status-loading" role="status"></p>
         <a id="resultLink" class="button button-primary" target="_blank" rel="noopener noreferrer" hidden>在飞书中打开</a>
         <details id="jobDetails" class="advanced-settings">
           <summary class="advanced-summary">查看处理详情</summary>
           <div class="advanced-content">
             <p id="jobDetailStatus" class="hint"></p>
+            <p id="progressTiming" class="hint progress-timing"></p>
             <div class="actions">
               <button id="resume" class="button" type="button" hidden>重试当前保存</button>
               <a id="copyLink" class="button" target="_blank" rel="noopener noreferrer" hidden>查看暂存文档</a>
               <button id="endTask" class="button" type="button" hidden>停止重试，保留暂存文档</button>
             </div>
-            <p class="hint">临时连接异常会自动恢复，浏览器重新打开后会接着处理。其他文章可以照常保存，不受这篇文章的结果影响。</p>
+
           </div>
         </details>
       </section>
 
       <details id="saveForm" class="panel workspace-panel save-content-panel" open>
-        <summary id="saveFormSummary" class="advanced-summary" hidden>查看来源与保存位置</summary>
+        <summary id="saveFormSummary" class="advanced-summary" hidden>来源与保存位置</summary>
         <div class="source-section">
           <div class="panel-head"><h2>来源文章</h2></div>
           <p id="sourceTitle" class="article-title">当前网页</p>

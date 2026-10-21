@@ -14,7 +14,7 @@
     {
       key: "ai-ready",
       label: "带图留档",
-      description: "嵌入图片，文件会变大"
+      description: "Markdown 与图片自动保存"
     },
     {
       key: "obsidian",

@@ -1,4 +1,4 @@
-// Real Chromium + the unchanged MV3 extension. Feishu responses are simulated;
+// Real Chromium + the shipped MV3 extension. Feishu responses are simulated;
 // DOM injection, script errors, CORS, storage and the save UI use real Chrome APIs.
 const assert = require("node:assert/strict");
 const path = require("node:path");
@@ -98,8 +98,7 @@ async function installFeishuFixture(worker) {
     const source = await context.newPage();
     await source.goto(pageUrl("long-code"));
     const sourceTabId = await worker.evaluate(async url => (await chrome.tabs.query({ url }))[0].id, source.url());
-    const save = await context.newPage();
-    save.on("dialog", dialog => dialog.accept());
+    let save;
     let selectedSourceUrl = "";
     async function openSave({ jobId } = {}) {
       selectedSourceUrl = source.url();
@@ -126,17 +125,91 @@ async function installFeishuFixture(worker) {
       }
       throw new Error(`Job timeout: ${await save.locator("#jobStatus").innerText()}`);
     }
-    await openSave();
-    if (process.env.FEISHU_UI_SCREENSHOT) {
-      await save.screenshot({ path: process.env.FEISHU_UI_SCREENSHOT, fullPage: true });
-      await save.setViewportSize({ width: 390, height: 844 });
-      assert.equal(await save.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      await save.screenshot({ path: process.env.FEISHU_UI_SCREENSHOT.replace(/\.png$/, "-narrow.png"), fullPage: true });
-      await save.setViewportSize({ width: 1280, height: 720 });
-    }
-    await save.locator("#save").click();
+    // Exercise the shipped popup's location edit and primary action, including
+    // its source-tab routing. The save page must consume the popup confirmation
+    // exactly once without asking for another confirmation.
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${id}/popup.html?${new URLSearchParams({
+      sourceTabId: String(sourceTabId), source: source.url(), destination: "feishu"
+    })}`);
+    await popup.waitForFunction(() => !document.getElementById("openFeishuSave").disabled);
+    const editOpened = context.waitForEvent("page");
+    await popup.locator("#changeDestination").click();
+    const edit = await editOpened;
+    await edit.waitForURL(/feishu-save\.html/);
+    await edit.locator('#connectionPanel[data-state="connected"]').waitFor();
+    assert.equal(new URL(edit.url()).searchParams.get("editTarget"), "1");
+    assert.equal(await edit.locator("#destinationSettings").evaluate(element => element.open), true);
+    assert.equal(await edit.locator("#targetUrl").evaluate(element => element === document.activeElement), true);
+    assert.equal(await worker.evaluate(() => browserFixture.created), 0);
+    assert.equal(await worker.evaluate(() => browserFixture.calls.some(action => ["prepare_web_content", "import_step", "move_doc"].includes(action))), false);
+    await edit.close();
+    console.log("PASS: popup location editing opens the target settings without reading or writing an article");
+
+    // Without a pinned target, a legacy autoStart link may show the current
+    // default but must still require a fresh explicit save confirmation.
+    const unbound = await context.newPage();
+    await unbound.goto(`chrome-extension://${id}/feishu-save.html?${new URLSearchParams({
+      source: source.url(), sourceTabId: String(sourceTabId), autoStart: "1"
+    })}`);
+    await unbound.waitForFunction(() => !document.getElementById("save").disabled
+      && !new URL(location.href).searchParams.has("autoStart"));
+    assert.equal(await unbound.locator("#jobPanel").isVisible(), false);
+    assert.equal(await worker.evaluate(() => browserFixture.created), 0);
+    await unbound.close();
+    console.log("PASS: autoStart without an explicitly confirmed target cannot write to a global default");
+
+    // Change the global preference after the popup click, immediately before
+    // the save page reads state. This is a real storage change; the source,
+    // destination validation and save pipeline continue through actual APIs.
+    await context.addInitScript(() => {
+      if (!location.pathname.endsWith("/feishu-save.html")
+        || new URL(location.href).searchParams.get("autoStart") !== "1") return;
+      const sendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
+      let changed = false;
+      chrome.runtime.sendMessage = (message, ...args) => {
+        if (!changed && message.type === "feishu-clip" && message.action === "state") {
+          changed = true;
+          chrome.storage.local.set({ feishuWikiClipTarget: {
+            url: "https://my.feishu.cn/wiki/ChangedAfterClick", origin: "https://my.feishu.cn", spaceId: "123",
+            parentToken: "ChangedAfterClick", title: "另一篇文章的新默认位置", spaceName: "测试知识库"
+          } }).then(() => {
+            window.defaultChangedBeforeState = true;
+            sendMessage(message, ...args);
+          });
+          return;
+        }
+        return sendMessage(message, ...args);
+      };
+    });
+    selectedSourceUrl = source.url();
+    const saveOpened = context.waitForEvent("page");
+    await popup.locator("#openFeishuSave").click();
+    save = await saveOpened;
+    save.on("dialog", dialog => dialog.accept());
+    await save.waitForURL(/feishu-save\.html/);
+    await save.locator('#connectionPanel[data-state="connected"]').waitFor();
+    assert.equal(new URL(save.url()).searchParams.get("sourceTabId"), String(sourceTabId));
+    assert.equal(new URL(save.url()).searchParams.get("source"), source.url());
+    const initialRequestId = new URL(save.url()).searchParams.get("requestId");
+    assert(initialRequestId);
+    await save.waitForFunction(() => !new URL(location.href).searchParams.has("autoStart"));
+    await popup.close();
     let job = await waitJob(j => j?.stage === "complete" || j?.error);
     assert.equal(job.stage, "complete", job.error);
+    assert.equal(job.requestId, initialRequestId);
+    assert.equal(await save.evaluate(() => window.defaultChangedBeforeState), true);
+    assert.equal(job.target.url, parentUrl, "the save must use the destination confirmed at popup click, not a later global default");
+    assert.equal(new URL(save.url()).searchParams.get("target"), parentUrl);
+    console.log("PASS: a later global destination change cannot redirect the popup-confirmed save");
+    const createdBeforeReload = await worker.evaluate(() => browserFixture.created);
+    assert.equal(createdBeforeReload, 1);
+    await save.reload();
+    await save.locator("#resultLink").waitFor();
+    assert.equal(new URL(save.url()).searchParams.get("requestId"), initialRequestId);
+    assert.equal(await worker.evaluate(() => browserFixture.created), createdBeforeReload);
+    assert.equal((await waitJob(j => j.stage === "complete")).id, job.id);
+    console.log("PASS: popup confirmation saves immediately; refreshing the result restores the same request without a duplicate document");
     await save.waitForFunction(() => document.getElementById("jobStatus").textContent.includes("保存成功"));
     assert.equal(await save.locator("#resultLink").getAttribute("href"), job.resultUrl);
     assert.equal(await save.locator("#save").isVisible(), false);
