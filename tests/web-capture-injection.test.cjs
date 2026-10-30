@@ -4,14 +4,14 @@ const test = require("node:test");
 const vm = require("node:vm");
 const exporter = fs.readFileSync(require.resolve("../content-scripts/feishu-exporter.js"), "utf8");
 
-for (const version of [2, 3, 4, 5, 6]) test(`an already-open v${version} source tab upgrades capture and receives one non-conflicting v2 export listener`, async () => {
+for (const version of [2, 3, 4, 5, 6, 7]) test(`an already-open v${version} source tab upgrades capture and receives one non-conflicting v3 export listener`, async () => {
   const oldSnapshot = () => { throw new Error("Outdated capture must be replaced"); };
   const oldListener = () => false;
   const listeners = [oldListener];
   const context = vm.createContext({ FeishuWebCapture: { version, snapshot: oldSnapshot },
     chrome: { runtime: { onMessage: { addListener: listener => listeners.push(listener) } } } });
   vm.runInContext(exporter, context);
-  assert.equal(context.FeishuWebCapture.version, 7);
+  assert.equal(context.FeishuWebCapture.version, 10);
   assert.notEqual(context.FeishuWebCapture.snapshot, oldSnapshot);
   const newSnapshot = context.FeishuWebCapture.snapshot;
   vm.runInContext(exporter, context);
@@ -22,7 +22,7 @@ for (const version of [2, 3, 4, 5, 6]) test(`an already-open v${version} source 
   const calls = [];
   context.FeishuWebCapture.handleMessage = async message => { calls.push(message); return { upgraded: true }; };
   const response = await new Promise(resolve => assert.equal(listeners[1](
-    { type: "feishu-export:export-document-v2", format: "markdown" }, {}, resolve), true));
+    { type: "feishu-export:export-document-v3", format: "markdown" }, {}, resolve), true));
   assert.equal(response.ok, true);
   assert.equal(response.data.upgraded, true);
   assert.equal(calls.length, 1);
@@ -34,10 +34,10 @@ test("repeated capture injection in a fresh source tab registers the export list
   vm.runInContext(exporter, context);
   vm.runInContext(exporter, context);
   assert.equal(listeners.length, 1);
-  assert.equal(context.FeishuWebCapture.version, 7);
+  assert.equal(context.FeishuWebCapture.version, 10);
 });
 
-test("fresh v7 export listener accepts the original and updated protocols through the current dispatcher", async () => {
+test("fresh v10 export listener accepts the original and updated protocols through the current dispatcher", async () => {
   const listeners = [];
   const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener: listener => listeners.push(listener) } } } });
   vm.runInContext(exporter, context);
@@ -46,4 +46,22 @@ test("fresh v7 export listener accepts the original and updated protocols throug
     const response = await new Promise(resolve => listeners[0]({ type }, {}, resolve));
     assert.equal(response.ok, true); assert.equal(response.data, type);
   }
+});
+
+// v8+ forwards requests to the current global dispatcher. Upgrades must keep
+// exactly one listener and one execution, including an already-open v9 tab.
+for (const version of [8, 9]) test(`an already-open v${version} tab upgrades without duplicating its dynamic listener`, async () => {
+  const listeners = [];
+  const context = vm.createContext({ chrome: { runtime: { onMessage: { addListener: listener => listeners.push(listener) } } } });
+  vm.runInContext(exporter.replaceAll("version === 10", `version === ${version}`).replaceAll("version: 10", `version: ${version}`), context);
+  const oldSnapshot = context.FeishuWebCapture.snapshot;
+  vm.runInContext(exporter, context);
+  assert.equal(context.FeishuWebCapture.version, 10);
+  assert.notEqual(context.FeishuWebCapture.snapshot, oldSnapshot);
+  assert.equal(listeners.length, 1);
+  let calls = 0;
+  context.FeishuWebCapture.handleMessage = async () => { calls++; return { upgraded: true }; };
+  const response = await new Promise(resolve => listeners[0]({ type: "feishu-export:export-document-v3" }, {}, resolve));
+  assert.equal(response.data.upgraded, true);
+  assert.equal(calls, 1);
 });

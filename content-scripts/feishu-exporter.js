@@ -1,10 +1,31 @@
 (function () {
   // Dynamic injection can happen again when the user opens the save page.
   const previousCapture = globalThis.FeishuWebCapture;
-  if (previousCapture?.version === 7) return;
+  if (previousCapture?.version === 10) return;
   const MESSAGE_GET_PAGE_INFO = "feishu-export:get-page-info";
   const MESSAGE_EXPORT_DOCUMENT = "feishu-export:export-document";
   const MESSAGE_EXPORT_DOCUMENT_V2 = "feishu-export:export-document-v2";
+  const MESSAGE_EXPORT_DOCUMENT_V3 = "feishu-export:export-document-v3";
+  const MESSAGE_READ_EXPORT = "feishu-export:read-export-chunk";
+  const MESSAGE_RELEASE_EXPORT = "feishu-export:release-export";
+  // Bounded responses stay well below Chrome's 64MiB JSON message limit,
+  // even when a document contains hundreds of full-resolution images.
+  const EXPORT_CHUNK_SIZE = 256 * 1024;
+  const pendingExports = new Map();
+
+  function stageExport(payload) {
+    const id = crypto.randomUUID();
+    const text = JSON.stringify(payload);
+    const timer = setTimeout(() => pendingExports.delete(id), 5 * 60 * 1000);
+    pendingExports.set(id, { text, timer });
+    return { transfer: { id, length: text.length, chunkSize: EXPORT_CHUNK_SIZE } };
+  }
+
+  function releaseExport(id) {
+    const entry = pendingExports.get(id);
+    if (entry) clearTimeout(entry.timer);
+    pendingExports.delete(id);
+  }
   const MESSAGE_GET_SCYS_COURSE_OUTLINE = "feishu-export:get-scys-course-outline";
   const MESSAGE_GET_WECHAT_HISTORY_SEED = "feishu-export:get-wechat-history-seed";
   const MESSAGE_GET_WECHAT_MP_LOGIN_STATUS = "feishu-export:get-wechat-mp-login-status";
@@ -184,18 +205,20 @@
     ".mask"
   ].join(",");
 
-  // Pre-v7 listeners close over the old exporter. A new message name upgrades
-  // local export without racing that old listener for the same response.
-  const exportMessages = previousCapture ? [MESSAGE_EXPORT_DOCUMENT_V2] : [
+  // Old listeners retain their message names. v3 always has a single owner,
+  // including pages that were opened before the extension was upgraded.
+  const transferMessages = [MESSAGE_EXPORT_DOCUMENT_V3, MESSAGE_READ_EXPORT, MESSAGE_RELEASE_EXPORT];
+  const exportMessages = previousCapture ? transferMessages : [
       MESSAGE_GET_PAGE_INFO,
       MESSAGE_EXPORT_DOCUMENT,
       MESSAGE_EXPORT_DOCUMENT_V2,
+      ...transferMessages,
       MESSAGE_GET_SCYS_COURSE_OUTLINE,
       MESSAGE_GET_WECHAT_HISTORY_SEED,
       MESSAGE_GET_WECHAT_MP_LOGIN_STATUS,
       MESSAGE_RESOLVE_WECHAT_MP_HISTORY
     ];
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!(previousCapture?.version >= 8)) chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!message || !exportMessages.includes(message.type)) {
       return false;
     }
@@ -207,7 +230,7 @@
     return true;
   });
 
-  globalThis.FeishuWebCapture = { version: 7, snapshot: captureWebSnapshot, handleMessage };
+  globalThis.FeishuWebCapture = { version: 10, snapshot: captureWebSnapshot, handleMessage };
 
   async function captureWebSnapshot() {
     if (!globalThis.WebFeishuBlocks?.fromRoot) throw new Error("网页剪存组件未加载，请刷新扩展和原网页后重试。");
@@ -223,7 +246,7 @@
       liveRoot = await waitForWebCaptureRoot(sourceUrl);
       meta = isWechatArticlePage() ? getWechatArticleMeta() : getGenericWebMeta();
     }
-    if (!liveRoot || !String(liveRoot.textContent || "").trim()) throw new Error("未读取到文章正文，请先在原网页打开完整内容。");
+    if (!liveRoot || !(String(liveRoot.textContent || "").trim() || liveRoot.querySelector("img, video, audio"))) throw new Error("未读取到文章正文，请先在原网页打开完整内容。");
     const root = cloneWebCaptureRoot(liveRoot);
     if (location.href !== sourceUrl) throw new Error("原网页已切换，请从要保存的网页重新打开插件。");
     return globalThis.WebFeishuBlocks.fromRoot(root, { title: meta.title, sourceUrl });
@@ -241,13 +264,15 @@
       const content = String(root?.textContent || "").trim();
       // A ready introduction must not hide a still-loading embedded document.
       const regions = root ? [root, ...(isScysArticle
-        ? root.querySelectorAll(".post-content, .feishu-doc-content") : [])] : [];
+        ? root.querySelectorAll(".post-content, .feishu-doc-content") : []),
+        ...(isXArticleRoot(root) ? root.querySelectorAll('[data-testid="longformRichTextComponent"]') : [])] : [];
       const busySelector = '[aria-busy="true"], [role="progressbar"]';
       const loading = !root || !isCaptureNodeVisible(root) || regions.some(region => {
         if (!isCaptureNodeVisible(region)) return false;
         const text = String(region.textContent || "").trim();
         const optionalIntro = isScysArticle && region !== root && region.matches(".post-content");
-        return (!text && !optionalIntro) || /^(?:正在加载|加载中|请稍候|请先登录|登录后查看)/.test(text)
+        const xMedia = isXCaptureRoot(root) && region.querySelector("img, video, audio");
+        return (!text && !optionalIntro && !xMedia) || /^(?:正在加载|加载中|请稍候|请先登录|登录后查看)/.test(text)
           || region.matches(busySelector)
           || Array.from(region.querySelectorAll(busySelector)).some(isCaptureNodeVisible);
       });
@@ -293,6 +318,13 @@
     const clone = liveRoot.cloneNode(true);
     const copies = [clone, ...clone.querySelectorAll("*")];
     const cloneMap = new Map(originals.map((original, index) => [original, copies[index]]));
+    // Check against the live content boundary as well as the cleaned clone.
+    // Otherwise removing an entire carousel/group can hide omissions from the
+    // converter's later coverage check.
+    const xContent = isXCaptureRoot(liveRoot) ? originals.filter(node =>
+      (node.matches('[data-testid="tweetText"], [data-testid="twitter-article-title"], [data-text="true"], img, video, audio'))
+      && !node.closest('[data-testid="Tweet-User-Avatar"], button, [aria-hidden="true"]')
+      && isCaptureNodeVisible(node)) : [];
     // Preserve visible inline emphasis before detaching the article from its CSS.
     originals.forEach((original, index) => {
       const copy = copies[index];
@@ -335,11 +367,32 @@
         copy.setAttribute("src", original.currentSrc);
       }
     });
+    if (isXCaptureRoot(liveRoot)) normalizeXCaptureClone(clone);
     for (const node of clone.querySelectorAll("script, style, noscript, template, nav, form, dialog, .block-code-header")) node.remove();
+    if (xContent.some(node => !clone.contains(cloneMap.get(node))
+      || cloneMap.get(node).textContent !== node.textContent)) {
+      throw Object.assign(new Error("X 正文清理遗漏了原文文字或媒体，已停止保存。"), { code: "CONTENT_MISMATCH" });
+    }
     return clone;
   }
 
   async function handleMessage(message) {
+    if (message.type === MESSAGE_EXPORT_DOCUMENT_V3) {
+      return stageExport(await exportDocument(message.format, message.options || {}));
+    }
+    if (message.type === MESSAGE_RELEASE_EXPORT) {
+      releaseExport(message.id);
+      return { released: true };
+    }
+    if (message.type === MESSAGE_READ_EXPORT) {
+      const entry = pendingExports.get(message.id);
+      if (!entry) throw new Error("导出数据已过期，请重新导出。");
+      const offset = message.offset;
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset >= entry.text.length || offset % EXPORT_CHUNK_SIZE !== 0) {
+        throw new Error("导出数据分片位置无效。");
+      }
+      return { offset, chunk: entry.text.slice(offset, offset + EXPORT_CHUNK_SIZE) };
+    }
     if (message.type === MESSAGE_GET_PAGE_INFO) {
       return getPageInfo();
     }
@@ -582,7 +635,7 @@
   }
 
   function maybeReplaceFeishuMarkdownWithDom(clientVarsMarkdown, localImageReferences = null) {
-    if (!hasVisibleFeishuTable()) {
+    if (/\]\(assets\/attachment-/.test(clientVarsMarkdown) || !hasVisibleFeishuTable()) {
       return clientVarsMarkdown;
     }
 
@@ -1455,6 +1508,19 @@
   }
 
   function getGenericWebMeta() {
+    if (isXPage()) {
+      const root = getXCaptureRoot();
+      const post = root?.closest('article[data-testid="tweet"]') || root;
+      const quotes = post ? xQuoteCards(post) : [];
+      const own = node => !quotes.some(quote => quote.contains(node));
+      const author = post && Array.from(post.querySelectorAll('[data-testid="User-Name"]')).find(own);
+      const timeLink = post && Array.from(post.querySelectorAll('a[href]')).find(link => own(link)
+        && link.querySelector("time") && (!xStatusId(location.href) || xStatusId(link.getAttribute("href")) === xStatusId(location.href)));
+      const time = timeLink?.querySelector("time");
+      return { pageType: "网页文章", exportType: "generic-web", title: getXPageTitle(root) || "X 推文",
+        author: cleanupInline(author?.innerText || author?.textContent || ""),
+        publishTime: time?.getAttribute("datetime") || cleanupInline(time?.textContent || "") };
+    }
     const title = normalizeGenericTitle(
       extractGenericPageTitle()
       || document.querySelector('meta[property="og:title"]')?.getAttribute("content")
@@ -1495,7 +1561,152 @@
     return "generic";
   }
 
+  function isXPage() {
+    return getGenericReadableSiteHint(location.hostname) === "x";
+  }
+
+  function isXArticleRoot(node) {
+    return isXPage() && node?.getAttribute("data-testid") === "twitterArticleReadView";
+  }
+
+  function isXCaptureRoot(node) {
+    return isXPage() && ["tweet", "twitterArticleReadView"].includes(node?.getAttribute("data-testid"));
+  }
+
+  function xStatusId(value) {
+    try {
+      const url = new URL(value, location.href);
+      if (!/^https?:$/.test(url.protocol) || getGenericReadableSiteHint(url.hostname) !== "x") return "";
+      return url.pathname.match(/^\/(?:[^/]+|i\/web)\/status\/(\d+)(?:\/|$)/)?.[1] || "";
+    } catch (_) { return ""; }
+  }
+
+  function xQuoteCards(root) {
+    return Array.from(root.querySelectorAll('[data-testid="simpleTweet"], div[role="link"]'))
+      .filter(node => node.getAttribute("data-testid") === "simpleTweet"
+        || node.querySelector('[data-testid="User-Name"]')
+        && node.querySelector('[data-testid="tweetText"], [data-testid="tweetPhoto"], [data-testid="article-cover-image"]'));
+  }
+
+  function getXCaptureRoot() {
+    const statusId = xStatusId(location.href);
+    let article;
+    if (statusId) {
+      // A conversation contains the requested post, quoted posts, replies and
+      // recommendations. Match its own permalink, never its length or order.
+      const posts = Array.from(document.querySelectorAll('article[data-testid="tweet"]')).filter(isCaptureNodeVisible);
+      const matches = posts.filter(post => {
+        const quotes = xQuoteCards(post);
+        return Array.from(post.querySelectorAll('a[href]')).some(link => {
+          if (link.closest('article[data-testid="tweet"]') !== post
+            || link.closest('[data-testid="tweetText"], [data-testid="twitterArticleRichTextView"]')
+            || quotes.some(quote => quote.contains(link))) return false;
+          const url = new URL(link.getAttribute("href"), location.href);
+          return link.querySelector("time") && xStatusId(url.href) === statusId && /\/status\/\d+\/?$/.test(url.pathname);
+        });
+      });
+      if (matches.length > 1) throw Object.assign(new Error("发现多个目标推文，请打开单篇推文后再保存。"), { code: "PAGE_CAPTURE_FAILED" });
+      const post = matches[0];
+      if (!post) return null;
+      const quotes = xQuoteCards(post);
+      const articles = Array.from(post.querySelectorAll('[data-testid="twitterArticleReadView"]'))
+        .filter(node => isCaptureNodeVisible(node) && !quotes.some(quote => quote.contains(node)));
+      if (articles.length > 1) throw Object.assign(new Error("发现多篇 X Article，请打开单篇文章后再保存。"), { code: "PAGE_CAPTURE_FAILED" });
+      article = articles[0];
+      if (!article) {
+        const owns = node => node.closest('article[data-testid="tweet"]') === post && !quotes.some(quote => quote.contains(node));
+        const more = Array.from(post.querySelectorAll('[data-testid="tweet-text-show-more-link"]')).find(node => owns(node) && isCaptureNodeVisible(node));
+        if (more) throw Object.assign(new Error("目标推文正文尚未展开，请在原网页展开全文后再保存。"), { code: "PAGE_NOT_READY" });
+        // An Article preview is not the full Article body.
+        if (Array.from(post.querySelectorAll('[data-testid="article-cover-image"]')).some(owns)) return null;
+        return Array.from(post.querySelectorAll('[data-testid="tweetText"], [data-testid="tweetPhoto"], [data-testid="videoPlayer"]'))
+          .some(node => owns(node) && isCaptureNodeVisible(node)
+            && (node.getAttribute("data-testid") === "tweetText" ? String(node.textContent || "").trim()
+              : node.querySelector("img, video, audio"))) ? post : null;
+      }
+    } else if (/^\/(?:i\/article|[^/]+\/article)\/\d+(?:\/|$)/.test(location.pathname)) {
+      const articles = Array.from(document.querySelectorAll('[data-testid="twitterArticleReadView"]')).filter(isCaptureNodeVisible);
+      if (articles.length > 1) throw Object.assign(new Error("发现多篇 X Article，请打开单篇文章后再保存。"), { code: "PAGE_CAPTURE_FAILED" });
+      article = articles[0];
+    } else throw Object.assign(new Error("请打开要保存的单条 X 推文或 Article，再从插件保存。"), { code: "PAGE_CAPTURE_FAILED" });
+    return article?.querySelector('[data-testid="twitter-article-title"]')
+      && article.querySelector('[data-testid="twitterArticleRichTextView"] [data-testid="longformRichTextComponent"]') ? article : null;
+  }
+
+  function getXPageTitle(root = getXCaptureRoot()) {
+    if (!root) return "";
+    const articleTitle = isXArticleRoot(root) && root.querySelector('[data-testid="twitter-article-title"]');
+    if (articleTitle) return cleanupInline(articleTitle.textContent || "");
+    const quotes = xQuoteCards(root);
+    const body = Array.from(root.querySelectorAll('[data-testid="tweetText"]')).find(node => !quotes.some(quote => quote.contains(node)));
+    const firstLine = String(body?.textContent || "").split(/\r?\n/).find(line => line.trim());
+    const title = cleanupInline(firstLine || "X 图片或视频推文");
+    return Array.from(title).length > 100 ? Array.from(title).slice(0, 100).join("") + "…" : title;
+  }
+
+  function xQuoteUrl(card) {
+    // A quote may be a JS-only role=link with no href. Use an unambiguous
+    // timestamp or media permalink when exposed; otherwise link to the source
+    // page where the quote can actually be opened, rather than inventing an ID.
+    const links = Array.from(card.querySelectorAll('a[href]'));
+    if (card.matches('a[href]')) links.unshift(card);
+    const candidates = links.filter(link => link.querySelector("time")
+      || link.querySelector('[data-testid="tweetPhoto"]') || link === card);
+    const urls = candidates.map(link => {
+      const url = new URL(link.getAttribute("href"), location.href);
+      if (!xStatusId(url.href)) return "";
+      const match = url.pathname.match(/^(\/(?:[^/]+|i\/web)\/status\/\d+)(?:\/|$)/);
+      return match ? url.origin + match[1] : "";
+    }).filter(Boolean);
+    return new Set(urls).size === 1 ? urls[0] : "";
+  }
+
+  function normalizeXCaptureClone(root) {
+    const quotes = xQuoteCards(root);
+    // X uses <nav> for real image carousels, in both posts and quote cards.
+    for (const nav of root.querySelectorAll("nav")) {
+      if (!nav.querySelector('[data-testid="ScrollSnap-List"] [data-testid="tweetPhoto"] img')) continue;
+      const media = root.ownerDocument.createElement("div");
+      for (const attribute of nav.attributes) media.setAttribute(attribute.name, attribute.value);
+      media.removeAttribute("role");
+      while (nav.firstChild) media.appendChild(nav.firstChild);
+      nav.replaceWith(media);
+    }
+    for (const group of Array.from(root.querySelectorAll('[role="group"]'))) {
+      if (group.querySelector('[data-testid="reply"], [data-testid="retweet"], [data-testid="like"]')
+        && !group.querySelector('[data-testid="tweetText"], [data-testid="longformRichTextComponent"], [data-testid="User-Name"], img, video, audio, p, h1, h2, h3, h4, h5, h6, blockquote, pre, table')) group.remove();
+    }
+    for (const node of root.querySelectorAll('[data-testid="Tweet-User-Avatar"], [data-testid="caret"], [data-testid="tweet-text-show-more-link"]')) node.remove();
+    // Only account-header badges are UI. An identically named SVG inside the
+    // authored body must still reach the shared unsupported-resource guard.
+    for (const badge of root.querySelectorAll('[data-testid="User-Name"] svg[data-testid="icon-verified"][aria-label]')) {
+      if (badge.hidden || badge.getAttribute("aria-hidden") === "true") { badge.remove(); continue; }
+      badge.replaceWith(root.ownerDocument.createTextNode(`（${badge.getAttribute("aria-label")}）`));
+    }
+    for (const link of Array.from(root.querySelectorAll('a[href]'))) {
+      const path = new URL(link.getAttribute("href"), location.href).pathname;
+      if (!link.closest('[data-testid="tweetText"], [data-testid="twitterArticleRichTextView"]')
+        && !quotes.some(quote => quote.contains(link)) && /\/status\/\d+\/(?:analytics|quotes)\/?$/.test(path)) link.remove();
+    }
+    for (const card of quotes) {
+      const url = xQuoteUrl(card);
+      const label = root.ownerDocument.createElement("p");
+      label.appendChild(root.ownerDocument.createTextNode("引用推文（页面预览，"));
+      const link = root.ownerDocument.createElement("a");
+      link.href = url || location.href;
+      link.textContent = url ? "完整内容见原文链接" : "在来源网页查看引用";
+      label.append(link, root.ownerDocument.createTextNode("）"));
+      card.prepend(label);
+    }
+    const title = root.querySelector('[data-testid="twitter-article-title"]');
+    if (title) {
+      title.setAttribute("role", "heading");
+      title.setAttribute("aria-level", "1");
+    }
+  }
+
   function getGenericExportRoot() {
+    if (isXPage()) return getXCaptureRoot();
     const selectors = [
       "article",
       "[itemprop='articleBody']",
@@ -2669,6 +2880,7 @@
         : options.localImageAssets === true
           ? await buildLocalImageMap(blockMap, meta, options)
           : buildLinkedImageMap(blockMap),
+      fileMap: await buildLocalFileMap(blockMap, options),
       sheetMap: await buildSheetMarkdownMap(meta, blockMap),
       rootId: meta.exportToken,
       pageTitle: meta.title
@@ -2742,6 +2954,10 @@
         return renderHeading(text, 4, context.pageTitle);
       case "bullet":
         return renderBulletBlock(block, context, depth);
+      case "file":
+        return context.fileMap.get(blockId) || "";
+      case "isv":
+        return renderCatalogueComponent(block, context);
       case "image":
         return renderImageBlock(blockId, block, context);
       case "sheet":
@@ -2756,6 +2972,68 @@
         }
         return text;
     }
+  }
+
+  function renderCatalogueComponent(block, context) {
+    const data = block.data;
+    if (data.block_type_id !== "blk_637dcc698597401c1a8fd711") {
+      throw new Error("文档包含暂不支持导出的组件，已停止以免遗漏内容。");
+    }
+    const settings = data.data || {};
+    const ignored = new Set(settings.ignoreCataLogRecordIds || []);
+    const maxLevel = settings.isShowAllLevel ? 9 : Number(settings.showCataLogLevel) || 3;
+    const entries = [];
+    const visit = (id) => {
+      const current = context.blockMap[id];
+      if (!current?.data || current.data.hidden) return;
+      const level = /^heading([1-9])$/.exec(current.data.type)?.[1];
+      if (level && Number(level) <= maxLevel && !ignored.has(id)) {
+        const title = getBlockText(current).replace(/[\[\]]/g, "\\$&");
+        if (title) entries.push(`${"  ".repeat(Number(level) - 1)}- [${title}](${location.href.split("#")[0]}#${encodeURIComponent(id)})`);
+      }
+      for (const child of current.data.children || []) visit(child);
+    };
+    for (const id of context.blockMap[context.rootId]?.data?.children || []) visit(id);
+    return entries.join("\n");
+  }
+
+  async function buildLocalFileMap(blockMap, options) {
+    const map = new Map();
+    const sourceUrl = location.href;
+    const assets = options.assets || [];
+    for (const [id, block] of Object.entries(blockMap)) {
+      if (block?.data?.type !== "file" || block.data.hidden) continue;
+      const file = block.data.file || {};
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(file.token || "")) throw new Error("附件缺少有效标识，已停止导出以免遗漏内容。");
+      const label = String(file.name || "附件").replace(/[\[\]]/g, "\\$&");
+      if (options.localFileAssets !== true && options.localImageAssets !== true) {
+        map.set(id, `[${label}（原文附件）](${sourceUrl.split("#")[0]}#${encodeURIComponent(id)})`);
+        continue;
+      }
+      if (file.mimeType !== "video/mp4" || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 20 * 1024 * 1024) {
+        throw new Error(`附件 ${file.name || ""} 的格式或大小暂不支持完整导出，未生成不完整文件。`);
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FEISHU_IMAGE_FETCH_TIMEOUT_MS);
+      try {
+        const response = await fetch(`https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/preview/${encodeURIComponent(file.token)}/?preview_type=16`,
+          { credentials: "include", signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length !== file.size || String.fromCharCode(...bytes.subarray(4, 8)) !== "ftyp") {
+          throw new Error("返回的附件大小或格式与原文不符");
+        }
+        if (location.href !== sourceUrl) throw new Error("源文档已跳转");
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        const path = `assets/attachment-${String(map.size + 1).padStart(3, "0")}.mp4`;
+        assets.push({ path, mimeType: "video/mp4", contentBase64: btoa(binary) });
+        map.set(id, `[${label}](${path})`);
+      } catch (error) {
+        throw new Error(`附件 ${file.name || ""} 未保存：${error.message}，未生成不完整文件。`);
+      } finally { clearTimeout(timer); }
+    }
+    return map;
   }
 
   function renderHeading(text, level, pageTitle) {
@@ -2848,10 +3126,19 @@
       const src = `https://internal-api-drive-stream.feishu.cn/space/api/box/stream/download/preview/${encodeURIComponent(token)}/?preview_type=16`;
       return { blockId, block, src };
     });
-    const results = await Promise.all(sources.map(async (entry, index) => ({
-      blockId: entry.blockId,
-      asset: await fetchImageAsAsset(entry.src, entry.block, "assets", assets.length + index + 1, options.imageFetchTimeoutMs)
-    })));
+    const results = new Array(sources.length);
+    let next = 0, failure = null;
+    await Promise.all(Array.from({ length: Math.min(3, sources.length) }, async () => {
+      while (!failure && next < sources.length) {
+        const index = next++;
+        const entry = sources[index];
+        try {
+          results[index] = { blockId: entry.blockId,
+            asset: await fetchImageAsAsset(entry.src, entry.block, "assets", assets.length + index + 1, options.imageFetchTimeoutMs) };
+        } catch (error) { failure = error; }
+      }
+    }));
+    if (failure) throw failure;
 
     if (location.href !== sourceUrl) throw new Error("源文档已跳转，已停止导出；请重新打开要保存的文档。");
     for (const { blockId, asset } of results) {
@@ -4474,6 +4761,7 @@
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
       __test: {
+        stageExport,
         convertBlock,
         getGenericWebMeta,
         convertClientVarsToMarkdown,
