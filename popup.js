@@ -126,6 +126,8 @@ let wechatProgressTimer = 0;
 let wechatQueryStartedAt = 0;
 let obsidianBinding = null;
 let outputTarget = "download";
+let defaultOutputTarget = "download";
+let draftSaveQueue = Promise.resolve();
 let currentExportType = "unsupported";
 let detectedCategory = "other";
 let activeCategory = "other";
@@ -148,7 +150,7 @@ init().catch((error) => {
 primaryActionButton.addEventListener("click", handlePrimaryAction);
 secondaryActionButton.addEventListener("click", handleSecondaryAction);
 scysExportCourseButton.addEventListener("click", handleCourseExport);
-scysExportCurrentButton.addEventListener("click", () => handleExport("markdown"));
+scysExportCurrentButton.addEventListener("click", () => handleExport("markdown", document.getElementById("courseOutputTarget").value));
 batchDownloadLinksButton.addEventListener("click", handleBatchDownloadLinks);
 helperCheckButton.addEventListener("click", () => refreshWechatHistoryStatus({ silent: false }).catch(() => {}));
 helperDownloadButton.addEventListener("click", () => handleWechatHistoryList());
@@ -158,10 +160,9 @@ helperSelectAllButton.addEventListener("click", () => selectWechatArticles(true)
 helperSelectNoneButton.addEventListener("click", () => selectWechatArticles(false));
 for (const input of [helperSeedUrlInput, helperStartDateInput, helperEndDateInput]) {
   input.addEventListener("input", () => {
-    if (!matchesWechatRange(wechatHistoryView)) {
-      wechatHistoryView = null; helperStatusEl.hidden = true;
-      renderWechatArticles(); setHistoryControlsDisabled(isWechatHistoryRunning || isWechatSelectionDownloading);
-    }
+    // Editing a draft never relabels or discards the last successfully queried list.
+    document.getElementById("wechatConditions").open = true;
+    persistPopupDraft();
   });
 }
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -169,15 +170,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
   const selection = changes.wechatHistorySelection?.newValue;
   if (selection) wechatHistorySelection = selection;
   const view = changes.wechatHistoryView?.newValue;
-  if (view && matchesWechatRange(view)) {
+  if (view && (matchesWechatRange(view) || view.listId && view.listId === wechatHistoryView?.listId)) {
     applyWechatHistoryView(view);
   } else if (selection && selection.listId === wechatHistoryView?.listId) {
     wechatHistoryView = { ...wechatHistoryView, selectedUrls: selection.urls };
     renderWechatArticles();
   }
 });
-includeImagesInput.addEventListener("change", () => { syncIncludeImages(true); storageSet({ includeImages: includeImagesInput.checked }); });
-includeImagesHelperInput.addEventListener("change", () => { syncIncludeImages(false); storageSet({ includeImages: includeImagesInput.checked }); });
+includeImagesInput.addEventListener("change", () => { storageSet({ includeImages: includeImagesInput.checked }); });
+includeImagesHelperInput.addEventListener("change", persistPopupDraft);
 outputTargetInputs.forEach((input) => input.addEventListener("change", handleOutputTargetChange));
 pickObsidianFolderButton.addEventListener("click", handlePickObsidianFolder);
 clearObsidianFolderButton.addEventListener("click", handleClearObsidianFolder);
@@ -208,26 +209,35 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 categoryTabButtons.forEach((button, key) => {
   button?.addEventListener("click", () => setActiveCategory(key));
-  button?.addEventListener("keydown", (event) => {
-    const tabs = [...categoryTabButtons.entries()].filter(([, tab]) => tab);
-    const index = tabs.findIndex(([category]) => category === key);
-    let next;
-    if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
-    if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
-    if (event.key === "Home") next = 0;
-    if (event.key === "End") next = tabs.length - 1;
-    if (next === undefined) return;
-    event.preventDefault();
-    setActiveCategory(tabs[next][0]);
-    tabs[next][1].focus();
-  });
 });
-document.getElementById("openExportSettings")?.addEventListener("click", () => {
-  const settings = document.getElementById("popupAdvancedSettings");
-  settings.hidden = !settings.hidden;
-  settings.open = !settings.hidden;
-  document.getElementById("openExportSettings").setAttribute("aria-expanded", String(!settings.hidden));
-  if (!settings.hidden) focusElement(settings.querySelector("summary"));
+document.getElementById("openExportSettings")?.addEventListener("click", () => globalThis.PopupNavigation.page === "settings" ? globalThis.PopupNavigation.back() : globalThis.PopupNavigation.settings());
+document.getElementById("batchSource").addEventListener("change", event => { activeCategory = event.target.value; renderBatchWorkspace(); persistPopupDraft(); });
+for (const id of ["batchLinks", "batchZipOutput", "batchIncludeImages", "batchOutputTarget", "courseOutputTarget", "helperOutputFormat"]) {
+  document.getElementById(id).addEventListener("input", persistPopupDraft);
+  document.getElementById(id).addEventListener("change", () => { renderOutputTargetUi(); persistPopupDraft(); });
+}
+for (const input of document.querySelectorAll('[name="courseScope"]')) input.addEventListener("change", () => { renderCourseScope(); persistPopupDraft(); });
+document.getElementById("courseOutline").addEventListener("toggle", async event => {
+  if (!event.currentTarget.open || !courseExportEnabled) return;
+  const list = document.getElementById("courseOutlineList");
+  list.textContent = "正在读取专栏目录…";
+  try { showCourseOutline(await sendMessageToActivePage({ type: "feishu-export:get-scys-course-outline" })); }
+  catch (error) { list.textContent = error.message || "目录暂不可用，可收起后重新展开。"; }
+});
+document.getElementById("startCourseExport").addEventListener("click", async () => {
+  const feedback = document.getElementById("courseFeedback");
+  feedback.textContent = "正在准备导出…";
+  if (document.querySelector('[name="courseScope"]:checked').value === "all") await handleCourseExport();
+  else await handleExport("markdown", document.getElementById("courseOutputTarget").value);
+  feedback.textContent = statusEl.textContent;
+});
+document.getElementById("openWechatManager").addEventListener("click", async () => {
+  if (!await persistPopupDraft()) return;
+  const url = new URL(chrome.runtime.getURL("popup.html"));
+  url.searchParams.set("view", "wechat-manage");
+  url.searchParams.set("sourceTabId", String(activeTabId));
+  url.searchParams.set("source", activeTabUrl);
+  await chrome.tabs.create({ url: url.href });
 });
 openFeishuSaveButton.addEventListener("click", () => openSavePage({ autoStart: true }));
 
@@ -263,8 +273,14 @@ async function init() {
   applyOutputTargetToInputs();
   await refreshObsidianBinding({ silent: true });
 
-  const [tab] = await queryActiveTab();
-  if (!tab?.id) {
+  let tab;
+  try { [tab] = await queryActiveTab(); }
+  catch (error) {
+    if (!globalThis.PopupNavigation.manager) throw error;
+    // A retained local list does not need its original browser tab to remain open.
+    tab = { id: null, url: popupRoute.get("source") || "" };
+  }
+  if (!tab?.id && !globalThis.PopupNavigation.manager) {
     throw new Error("未找到当前标签页");
   }
 
@@ -293,7 +309,11 @@ async function init() {
     helperEndDateInput.value = savedRange.endDate;
   }
 
-  if (tab.url && isWechatMpBackendUrl(tab.url)) {
+  if (globalThis.PopupNavigation.manager && !tab.id) {
+    setPageMeta(null);
+    setStatus("原网页已关闭或切换，已有文章列表仍可管理。", "ready");
+    setButtonsDisabled(true);
+  } else if (tab.url && isWechatMpBackendUrl(tab.url)) {
     pageInfo = {
       title: "公众号后台",
       docType: "公众号后台",
@@ -338,27 +358,31 @@ async function init() {
   const savedHistory = await storageGet(["wechatHistoryView", "wechatHistorySelection"]);
   const previousView = savedHistory.wechatHistoryView;
   wechatHistorySelection = savedHistory.wechatHistorySelection || null;
-  if (matchesWechatRange(previousView)) {
+  if (matchesWechatRange(previousView) || previousView?.listId && Array.isArray(previousView.articles)) {
     applyWechatHistoryView(previousView);
     if (previousView.state === "loading") setHelperStatus("查询进度已保留，可先查看已有文章；点击“继续获取”可接续查询。", "loading");
   }
 
+  await restorePopupDraft();
+  if (globalThis.PopupNavigation.manager) { activeCategory = "wechat"; globalThis.PopupNavigation.setTool("wechat"); }
+  document.getElementById("sourceDomain").textContent = (() => { try { return new URL(activeTabUrl).hostname; } catch (_) { return ""; } })();
   renderPrimarySurface();
   renderCategoryWorkspace();
+  requestAnimationFrame(() => { document.getElementById("toggleSourceTitle").hidden = titleEl.scrollHeight <= titleEl.clientHeight + 2; });
 }
 
-async function handleExport(format) {
+async function handleExport(format, selectedOutput = outputTarget) {
   if (!activeTabId) {
     setStatus("当前标签页不可用。", "error");
     return;
   }
 
-  const shouldDownload = wantsDownload();
-  const shouldSaveToObsidian = format === "markdown" && wantsObsidian();
+  const shouldDownload = getOutputTargetState(selectedOutput).wantsDownload;
+  const shouldSaveToObsidian = format === "markdown" && getOutputTargetState(selectedOutput).wantsObsidian;
   const shouldDownloadMarkdown = shouldDownload && format === "markdown";
 
-  if (format === "markdown" && wantsObsidian()) {
-    const vaultReady = await ensureObsidianReadyIfNeeded();
+  if (shouldSaveToObsidian) {
+    const vaultReady = await ensureObsidianReadyIfNeeded(selectedOutput);
     if (!vaultReady) {
       return;
     }
@@ -370,10 +394,11 @@ async function handleExport(format) {
 
   try {
     const payload = await sendMessageToActivePage({
-      type: "feishu-export:export-document-v2",
+      type: "feishu-export:export-document-v3",
       format,
       options: {
         includeImages: includeImagesInput.checked,
+        localFileAssets: shouldDownloadMarkdown || shouldSaveToObsidian,
         localImageAssets: (shouldDownloadMarkdown || shouldSaveToObsidian) && includeImagesInput.checked
       }
     });
@@ -431,17 +456,24 @@ async function handleBatchDownloadLinks() {
     return;
   }
 
-  if (wantsObsidian()) {
-    const vaultReady = await ensureObsidianReadyIfNeeded();
+  const category = document.getElementById("batchSource").value;
+  const links = parseBatchLinks(batchLinksInput.value, category);
+  const includeImages = document.getElementById("batchIncludeImages").checked;
+  const zipOutput = batchZipOutputInput.checked;
+  const selectedOutput = document.getElementById("batchOutputTarget").value;
+  if (getOutputTargetState(selectedOutput).wantsObsidian) {
+    const vaultReady = await ensureObsidianReadyIfNeeded(selectedOutput);
     if (!vaultReady) {
       return;
     }
   }
 
-  const links = parseBatchLinks(batchLinksInput.value, activeCategory);
   if (links.length === 0) {
+    document.getElementById("batchInputError").textContent = "请粘贴所选来源的有效文章链接，每行一个。";
+    batchLinksInput.setAttribute("aria-invalid", "true");
+    batchLinksInput.focus();
     setBatchStatus(
-      activeCategory === "wechat"
+      category === "wechat"
         ? "请至少粘贴一个公众号文章链接。"
         : "请至少粘贴一个飞书 docx/wiki 链接。",
       "error"
@@ -449,13 +481,16 @@ async function handleBatchDownloadLinks() {
     return;
   }
 
+  document.getElementById("batchInputError").textContent = "";
+  batchLinksInput.removeAttribute("aria-invalid");
+  await persistPopupDraft();
   try {
     const job = await createStoredBatchJob(links, {
-      includeImages: includeImagesInput.checked,
-      zipOutput: batchZipOutputInput.checked,
-      outputTarget,
-      title: activeCategory === "wechat" ? "批量下载公众号文章" : "批量下载飞书文档",
-      source: activeCategory === "wechat" ? "manual-wechat-links" : "manual-feishu-links"
+      includeImages,
+      zipOutput,
+      outputTarget: selectedOutput,
+      title: category === "wechat" ? "批量下载公众号文章" : "批量下载飞书文档",
+      source: category === "wechat" ? "manual-wechat-links" : "manual-feishu-links"
     });
     await openBatchRunner(job.id);
     setBatchStatus(`已打开批量任务页，共 ${job.links.length} 篇。后续下载会在任务页继续执行。`, "ready");
@@ -471,8 +506,9 @@ async function handleCourseExport() {
     return;
   }
 
-  if (wantsObsidian()) {
-    const vaultReady = await ensureObsidianReadyIfNeeded();
+  const selectedOutput = document.getElementById("courseOutputTarget").value;
+  if (getOutputTargetState(selectedOutput).wantsObsidian) {
+    const vaultReady = await ensureObsidianReadyIfNeeded(selectedOutput);
     if (!vaultReady) {
       return;
     }
@@ -486,9 +522,10 @@ async function handleCourseExport() {
     const outline = await sendMessageToActivePage({
       type: "feishu-export:get-scys-course-outline"
     });
+    showCourseOutline(outline);
     const job = await createStoredCourseExportJob(outline, {
       includeImages: includeImagesInput.checked,
-      outputTarget
+      outputTarget: selectedOutput
     });
     await openBatchRunner(job.id);
     setStatus(`已创建专栏导出任务，共 ${job.chapters.length} 章。任务将在新页面中继续。`, "ready");
@@ -501,7 +538,7 @@ async function handleCourseExport() {
 }
 
 function hasWechatArticlesView(view = wechatHistoryView) {
-  return Boolean(view?.listId && Array.isArray(view.articles) && matchesWechatRange(view));
+  return Boolean(view?.listId && Array.isArray(view.articles));
 }
 
 function applyWechatHistoryView(view) {
@@ -509,6 +546,7 @@ function applyWechatHistoryView(view) {
   const selection = view.listId && wechatHistorySelection?.listId === view.listId ? wechatHistorySelection.urls : view.selectedUrls;
   wechatHistoryView = { ...view, selectedUrls: Array.isArray(selection) ? selection : [] };
   renderWechatArticles();
+  if (view.listId && Array.isArray(view.articles) && globalThis.document?.getElementById("wechatConditions")) document.getElementById("wechatConditions").open = false;
   if (!isWechatHistoryRunning && !isWechatSelectionDownloading) setHistoryControlsDisabled(false);
   if (!isWechatSelectionDownloading) renderWechatHistoryStatus();
   if (view.state !== "loading" && wechatProgressTimer) {
@@ -518,7 +556,7 @@ function applyWechatHistoryView(view) {
 
 function renderWechatHistoryStatus() {
   const view = wechatHistoryView;
-  if (!view || !matchesWechatRange(view) || isWechatSelectionDownloading) return;
+  if (!view || isWechatSelectionDownloading) return;
   const pages = Number(view.pageCount) || 0, scanned = Number(view.scannedCount) || 0;
   const count = view.articles?.length || 0;
   if (view.state === "error") {
@@ -606,7 +644,10 @@ function renderWechatArticles() {
   const visible = hasWechatArticlesView();
   helperResultsEl.hidden = !visible;
   const activeLabel = helperArticleListEl.contains(document.activeElement) ? document.activeElement.getAttribute("aria-label") : null;
-  helperArticleListEl.replaceChildren();
+  const scrollPosition = helperArticleListEl.scrollTop;
+  const signature = visible ? JSON.stringify([wechatHistoryView.listId, wechatHistoryView.articles]) : "";
+  const rebuild = helperArticleListEl.dataset.signature !== signature;
+  if (rebuild) helperArticleListEl.replaceChildren();
   if (!visible) { updateWechatSelectionControls(); return; }
   const view = wechatHistoryView;
   const uncertain = view.articles.filter(article => !article.publishDate || article.candidateDate || article.publicationSource === "message" && !article.dateVerified).length;
@@ -622,7 +663,7 @@ function renderWechatArticles() {
   helperArticleEmptyEl.hidden = view.articles.length > 0;
   helperArticleEmptyEl.textContent = view.complete ? "已有历史在此日期范围内没有文章，可调整日期或刷新账号历史。" : "暂未找到此范围的文章，历史尚未收集完，可继续获取。";
   const selected = new Set(view.selectedUrls || []);
-  for (const article of view.articles) {
+  if (rebuild) for (const article of view.articles) {
     const row = document.createElement("li"); row.className = "history-article";
     const label = document.createElement("label"); label.className = "history-article-check";
     const checkbox = document.createElement("input"); checkbox.type = "checkbox";
@@ -642,6 +683,10 @@ function renderWechatArticles() {
     date.textContent = article.publishDate ? `${article.publishDate}${article.candidateDate || article.publicationSource === "message" && !article.dateVerified ? "（待核验）" : ""}` : "发表日期待核验";
     copy.append(link, date); row.append(label, copy); helperArticleListEl.append(row);
   }
+  helperArticleListEl.dataset.signature = signature;
+  if (!rebuild) [...helperArticleListEl.querySelectorAll("input[type=checkbox]")].forEach((input, index) => { input.checked = selected.has(view.articles[index].url); });
+  helperArticleListEl.scrollTop = scrollPosition;
+  document.getElementById("wechatQuerySummary").textContent = `${formatWechatAccountLabel(view.matchedAccount)} · ${view.startDate} ～ ${view.endDate} · 修改条件`;
   updateWechatSelectionControls();
   if (activeLabel) for (const checkbox of helperArticleListEl.querySelectorAll("input[type=checkbox]")) {
     if (checkbox.getAttribute("aria-label") === activeLabel) { checkbox.focus({ preventScroll: true }); break; }
@@ -744,9 +789,11 @@ async function sendMessageWithRecovery(arg1, arg2) {
 
   // An older page has a receiver, but does not recognize the updated export
   // message. Upgrade before reading instead of waiting for a missing-port error.
-  if (message.type === "feishu-export:export-document-v2") {
+  if (["feishu-export:export-document-v2", "feishu-export:export-document-v3"].includes(message.type)) {
     await injectContentScript(tabId, frameId);
-    return sendMessageToTab(tabId, message, frameId);
+    const response = await sendMessageToTab(tabId, message, frameId);
+    return message.type === "feishu-export:export-document-v3"
+      ? readExportTransfer(tabId, frameId, response) : response;
   }
   try {
     return await sendMessageToTab(tabId, message, frameId);
@@ -757,6 +804,28 @@ async function sendMessageWithRecovery(arg1, arg2) {
 
     await injectContentScript(tabId, frameId);
     return sendMessageToTab(tabId, message, frameId);
+  }
+}
+
+async function readExportTransfer(tabId, frameId, response) {
+  const transfer = response?.transfer;
+  if (!transfer || typeof transfer.id !== "string") throw new Error("页面未返回导出数据，请刷新扩展和原网页后重试。");
+  try {
+    if (!Number.isSafeInteger(transfer.length) || transfer.length < 1
+      || transfer.chunkSize !== 256 * 1024) throw new Error("导出数据清单无效。");
+    const chunks = [];
+    for (let offset = 0; offset < transfer.length; offset += transfer.chunkSize) {
+      throwIfExportCanceled();
+      const part = await sendMessageToTab(tabId, { type: "feishu-export:read-export-chunk", id: transfer.id, offset }, frameId);
+      if (part?.offset !== offset || typeof part.chunk !== "string"
+        || part.chunk.length !== Math.min(transfer.chunkSize, transfer.length - offset)) {
+        throw new Error("导出数据传输不完整，未生成文件，请重新导出。");
+      }
+      chunks.push(part.chunk);
+    }
+    return JSON.parse(chunks.join(""));
+  } finally {
+    await sendMessageToTab(tabId, { type: "feishu-export:release-export", id: transfer.id }, frameId).catch(() => {});
   }
 }
 
@@ -1207,12 +1276,8 @@ async function persistOutputTarget() {
 }
 
 async function handleOutputTargetChange() {
-  outputTarget = normalizeOutputTarget(outputTargetInputs.find(input => input.checked)?.value, outputTarget);
-  destination = outputTarget === "download" ? "local" : "obsidian";
-  applyOutputTargetToInputs();
-  await Promise.all([persistOutputTarget(), storageSet({ clipperDestination: destination })]);
-  renderPrimarySurface();
-  renderCategoryWorkspace();
+  defaultOutputTarget = normalizeOutputTarget(outputTargetInputs.find(input => input.checked)?.value, defaultOutputTarget);
+  await storageSet({ outputTarget: defaultOutputTarget, obsidianSyncEnabled: defaultOutputTarget !== "download" });
 }
 
 function renderPrimarySurface() {
@@ -1276,7 +1341,7 @@ function renderPrimarySurface() {
 }
 
 function renderOutputTargetUi() {
-  const targetState = getActiveOutputTargetState();
+  const targetState = getOutputTargetState(document.getElementById("batchOutputTarget").value);
   if (batchZipOutputInput) {
     batchZipOutputInput.disabled = !targetState.wantsDownload || isWechatHistoryRunning;
   }
@@ -1287,7 +1352,8 @@ function getCategoryMeta(categoryKey) {
 }
 
 function setActiveCategory(categoryKey) {
-  activeCategory = getCategoryMeta(categoryKey).key;
+  activeCategory = categoryKey === "feishu" ? document.getElementById("batchSource").value : getCategoryMeta(categoryKey).key;
+  globalThis.PopupNavigation.setTool(categoryKey === "feishu" ? "feishu" : activeCategory);
   renderCategoryWorkspace();
 }
 
@@ -1300,21 +1366,11 @@ function renderCategoryWorkspace() {
 }
 
 function renderCategoryTabs() {
-  categoryTabButtons.forEach((button, key) => {
-    if (!button) {
-      return;
-    }
-    const selected = key === activeCategory;
-    button.dataset.active = selected ? "true" : "false";
-    button.setAttribute("aria-selected", selected ? "true" : "false");
-    button.tabIndex = selected ? 0 : -1;
-    if (selected) document.getElementById("categoryToolsPanel")?.setAttribute("aria-labelledby", button.id);
-  });
-
+  categoryTabButtons.forEach(button => { if (button) button.tabIndex = 0; });
 }
 
 function renderBatchWorkspace() {
-  const showBatch = activeCategory === "wechat" || activeCategory === "feishu";
+  const showBatch = globalThis.PopupNavigation.tool === "feishu";
   if (batchWorkspaceEl) {
     batchWorkspaceEl.hidden = !showBatch;
   }
@@ -1340,7 +1396,7 @@ function renderBatchWorkspace() {
 
 function renderScysWorkspace() {
   if (scysWorkspaceEl) {
-    scysWorkspaceEl.hidden = activeCategory !== "scys";
+    scysWorkspaceEl.hidden = globalThis.PopupNavigation.tool !== "scys";
   }
 
   if (activeCategory !== "scys") {
@@ -1350,19 +1406,22 @@ function renderScysWorkspace() {
   scysWorkspaceNoteEl.textContent = courseExportVisible
     ? "已识别当前课程，可导出完整专栏或单篇章节。"
     : "请先打开生财课程的任意章节，再使用专栏导出。";
+  document.getElementById("courseOutline").hidden = !courseExportVisible;
+  document.querySelector('[name="courseScope"][value="all"]').disabled = !courseExportEnabled;
+  renderCourseScope();
   scysExportCourseButton.disabled = actionButtonsLocked || !courseExportEnabled;
   scysExportCurrentButton.disabled = actionButtonsLocked || !Boolean(pageInfo?.supports?.includes?.("markdown")) || detectedCategory !== "scys";
 }
 
 function renderWechatWorkspace() {
   if (wechatWorkspaceEl) {
-    wechatWorkspaceEl.hidden = activeCategory !== "wechat";
+    wechatWorkspaceEl.hidden = globalThis.PopupNavigation.tool !== "wechat";
   }
 }
 
 function renderOtherWorkspace() {
   if (otherWorkspaceEl) {
-    otherWorkspaceEl.hidden = activeCategory !== "other";
+    otherWorkspaceEl.hidden = globalThis.PopupNavigation.tool !== "other";
   }
 
   if (activeCategory !== "other") {
@@ -1423,14 +1482,17 @@ async function loadPopupPreferences() {
     result.outputTarget,
     result.obsidianSyncEnabled === true ? "both" : "download"
   );
+  defaultOutputTarget = outputTarget;
+  document.getElementById("batchOutputTarget").value = defaultOutputTarget;
+  document.getElementById("courseOutputTarget").value = defaultOutputTarget;
   if (destination === "local") outputTarget = "download";
-  if (destination === "obsidian" && outputTarget === "download") outputTarget = "obsidian";
+  if (destination === "obsidian") outputTarget = "obsidian";
 }
 
 function applyOutputTargetToInputs() {
-  outputTargetDownloadInput.checked = outputTarget === "download";
-  outputTargetBothInput.checked = outputTarget === "both";
-  outputTargetObsidianInput.checked = outputTarget === "obsidian";
+  outputTargetDownloadInput.checked = defaultOutputTarget === "download";
+  outputTargetBothInput.checked = defaultOutputTarget === "both";
+  outputTargetObsidianInput.checked = defaultOutputTarget === "obsidian";
 }
 
 function getActiveOutputTargetState() {
@@ -1531,19 +1593,14 @@ async function handleClearObsidianFolder() {
     }
     setObsidianStatus("已清除 Obsidian 目录授权。", "ready");
     clearObsidianFolderButton.disabled = true;
-    if (wantsObsidian()) {
-      outputTarget = destination === "obsidian" ? "obsidian" : "download";
-      applyOutputTargetToInputs();
-      await persistOutputTarget();
-    }
     renderPrimarySurface();
   } catch (error) {
     setObsidianStatus(error.message || "清除 Obsidian 授权失败", "error");
   }
 }
 
-async function ensureObsidianReadyIfNeeded() {
-  if (!wantsObsidian()) {
+async function ensureObsidianReadyIfNeeded(selectedOutput = outputTarget) {
+  if (!getOutputTargetState(selectedOutput).wantsObsidian) {
     return true;
   }
 
@@ -2060,17 +2117,19 @@ async function selectDestination(value) {
   destination = value;
   obsidianSettingsRequested = false;
   if (value === "local") outputTarget = "download";
-  if (value === "obsidian") outputTarget = outputTarget === "both" ? "both" : "obsidian";
+  if (value === "obsidian") outputTarget = "obsidian";
   applyOutputTargetToInputs();
   renderPrimarySurface();
   renderCategoryWorkspace();
-  await Promise.all([persistOutputTarget(), storageSet({ clipperDestination: value })]);
+  await storageSet({ clipperDestination: value });
 }
 
 function focusObsidianSettings() {
   obsidianSettingsRequested = true;
+  globalThis.PopupNavigation.settings();
   const dock = document.getElementById("obsidianDock");
   dock.hidden = false;
+  dock.open = true;
   focusElement(pickObsidianFolderButton);
 }
 
@@ -2086,23 +2145,28 @@ function renderDestinationUi() {
   document.getElementById("changeDestination").disabled = Boolean(activeExportTask || openingSave);
   document.getElementById("changeDestinationLabel").textContent = "更改";
   document.getElementById("contentOptions").hidden = feishu || backend;
-  document.getElementById("obsidianDock").hidden = destination !== "obsidian" && !obsidianSettingsRequested;
+  document.getElementById("obsidianDock").hidden = false;
   if (feishu) {
     const target = feishuOverview.target;
-    destinationValue.textContent = target ? [target.spaceName, target.title].filter(Boolean).join(" / ") : "选择知识库位置";
+    destinationValue.textContent = target?.title || "选择知识库位置";
+    document.getElementById("destinationSpace").textContent = target?.spaceName || "";
+    document.getElementById("destinationSpace").hidden = !target?.spaceName;
     if (!target) document.getElementById("changeDestinationLabel").textContent = "选择";
     const state = feishuOverview.connection?.state || "checking";
     connectionIndicator.dataset.state = state;
     connectionIndicator.textContent = ({ connected: "连接器已就绪", checking: "正在检测连接…", setup: "需要首次连接", needs_auth: "需要恢复授权", error: "连接暂不可用" })[state];
     connectionIndicator.hidden = backend;
   } else {
+    document.getElementById("destinationSpace").hidden = true;
     destinationValue.textContent = obsidianBinding?.meta?.folderName || obsidianBinding?.handle?.name || "选择 Obsidian 目录";
     if (outputTarget === "both" && obsidianBinding) destinationValue.textContent += " · 同时下载到本地";
     connectionIndicator.hidden = true;
   }
   openFeishuSaveButton.hidden = !feishu || backend || Boolean(activeExportTask);
-  openFeishuSaveButton.disabled = openingSave || !/^https?:\/\//i.test(activeTabUrl);
-  openFeishuSaveButton.textContent = openingSave ? "正在打开…" : "保存到飞书";
+  openFeishuSaveButton.disabled = openingSave || !activeTabId || !/^https?:\/\//i.test(activeTabUrl);
+  const state = feishuOverview.connection?.state;
+  openFeishuSaveButton.textContent = openingSave ? "正在打开…" : state === "setup" ? "连接飞书并继续" : state === "needs_auth" ? "恢复授权并继续" : !feishuOverview.target ? "选择位置并继续" : "保存到飞书";
+  document.getElementById("primaryFooterNote").textContent = feishu ? "使用当前显示的位置；可在任务页查看进度。" : destination === "local" ? "Markdown 与附件保存到本地。" : "笔记与附件写入已授权目录。";
 }
 
 async function loadCachedOverview() {
@@ -2129,6 +2193,8 @@ function renderRecentSaves() {
   const rows = recentSaveModel.buildRecentSaves(feishuOverview.jobs, chrome.runtime.getURL(""));
   const pending = rows.filter(row => row.status === "running").length;
   const paused = rows.filter(row => row.status === "paused").length;
+  const badge = document.getElementById("navPending");
+  badge.textContent = String(pending + paused); badge.hidden = !(pending + paused);
   const summary = document.getElementById("recentSummary");
   summary.textContent = pending ? `${pending} 项处理中` : paused ? `${paused} 项需处理` : "";
   summary.dataset.attention = String(paused > 0);
@@ -2162,4 +2228,45 @@ function renderRecentSaves() {
   }
   document.getElementById("recentEmpty").hidden = rows.length > 0;
   document.getElementById("moreRecentSaves").hidden = rows.length <= recentLimit;
+}
+
+
+function showCourseOutline(outline) {
+  const list = document.getElementById("courseOutlineList");
+  list.replaceChildren(...(outline.chapters || []).map(chapter => { const li = document.createElement("li"); li.textContent = chapter.title || chapter.name || "未命名章节"; return li; }));
+  document.getElementById("courseOutline").hidden = !list.children.length;
+}
+function renderCourseScope() {
+  const all = document.querySelector('[name="courseScope"]:checked').value === "all";
+  document.getElementById("startCourseExport").disabled = actionButtonsLocked || detectedCategory !== "scys" || !Boolean(pageInfo?.supports?.includes?.("markdown")) || all && !courseExportEnabled;
+  document.getElementById("startCourseExport").textContent = document.querySelector('[name="courseScope"]:checked').value === "all" ? "导出完整专栏" : "导出当前章节";
+}
+
+const popupDraftIds = ["batchLinks", "batchSource", "batchZipOutput", "batchIncludeImages", "batchOutputTarget", "courseOutputTarget", "helperSeedUrl", "helperStartDate", "helperEndDate", "helperOutputFormat", "includeImagesHelper"];
+function persistPopupDraft() {
+  const fields = {};
+  for (const id of popupDraftIds) { const input = document.getElementById(id); fields[id] = input.type === "checkbox" ? input.checked : input.value; }
+  fields.courseScope = document.querySelector('[name="courseScope"]:checked').value;
+  draftSaveQueue = draftSaveQueue.catch(() => {}).then(() => storageSet({ popupToolDraft: fields })).then(() => true).catch(() => {
+    const message = "草稿暂未保存，请保持此页打开后重试。";
+    if (globalThis.PopupNavigation.tool === "wechat") setHelperStatus(message, "error");
+    else if (globalThis.PopupNavigation.tool === "feishu") setBatchStatus(message, "error");
+    else document.getElementById("courseFeedback").textContent = message;
+    return false;
+  });
+  return draftSaveQueue;
+}
+async function restorePopupDraft() {
+  const { popupToolDraft: fields } = await storageGet(["popupToolDraft"]);
+  if (fields) {
+    for (const id of popupDraftIds) {
+      if (!(id in fields)) continue;
+      const input = document.getElementById(id);
+      if (input.type === "checkbox") input.checked = fields[id] === true; else input.value = String(fields[id]);
+    }
+    const scope = [...document.querySelectorAll('[name="courseScope"]')].find(input => input.value === fields.courseScope);
+    if (scope) scope.checked = true;
+  }
+  renderCourseScope();
+  if (globalThis.PopupNavigation.tool === "feishu") activeCategory = document.getElementById("batchSource").value;
 }

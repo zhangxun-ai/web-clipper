@@ -21,9 +21,18 @@ function createRunner({ permission = 'granted', sourceFailures = [], writeFailur
   const state = { permission, sourceFailures: new Set(sourceFailures), writeFailures: new Set(writeFailures),
     sourceCalls: [], writes: [], written: new Map(), downloads: [], permissionRequests: 0, zipFails };
   const elements = new Map();
+  const makeElement = () => ({ textContent: '', className: '', hidden: true, disabled: false, children: [], dataset: {},
+    prepend(child) { this.children.unshift(child); }, append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = children; }, setAttribute(name, value) { this[name] = value; },
+    querySelector(selector) {
+      const match = selector.match(/^\[data-output="([^"]+)"\]$/);
+      const isMatch = item => match ? item.dataset.output === match[1] : item.className.split(' ').includes(selector.slice(1));
+      const search = node => { for (const child of node.children) { if (isMatch(child)) return child; const found = search(child); if (found) return found; } return null; };
+      return search(this);
+    }
+  });
   const element = id => {
-    if (!elements.has(id)) elements.set(id, { textContent: '', className: '', hidden: true, disabled: false, children: [],
-      prepend(child) { this.children.unshift(child); } });
+    if (!elements.has(id)) elements.set(id, makeElement());
     return elements.get(id);
   };
   const directory = prefix => ({
@@ -48,7 +57,7 @@ function createRunner({ permission = 'granted', sourceFailures = [], writeFailur
   if (missingWriter) delete storage.writeTextFiles;
   const context = {
     Blob, TextEncoder, Uint8Array, Uint32Array, DataView,
-    document: { createElement: () => ({ textContent: '', className: '' }) },
+    document: { createElement: makeElement, getElementById: element },
     statusEl: element('status'), progressEl: element('progress'), successEl: element('success'), failureEl: element('failure'),
     obsidianRetryPanelEl: element('retryPanel'), obsidianRetryCopyEl: element('retryCopy'), retryObsidianWriteButton: element('retryButton'),
     resultSummaryEl: element('results'), resultListEl: element('resultList'), logEl: element('logs'), resultEntryCache: new Set(),
@@ -74,7 +83,7 @@ function createRunner({ permission = 'granted', sourceFailures = [], writeFailur
   context.downloadWithFallback = (url, filename) => context.downloadFile({ url, filename });
   vm.createContext(context);
   vm.runInContext([
-    'let pendingObsidianRetry = null; let cachedObsidianBinding = fixtureBinding; let cachedObsidianBindingPromise = null; let stopRequested = false;',
+    'let pendingObsidianRetry = null; let cachedObsidianBinding = fixtureBinding; let cachedObsidianBindingPromise = null; let stopRequested = false; let deliveryRows = []; let deliveryJob = null;',
     section('async function runLinkBatchJob(', 'async function runCourseExportJob('),
     section('function getJobTotal(', 'async function exportLinkWithRetry('),
     section('async function downloadExportResult(', 'function sendMessageToTab('),
@@ -83,7 +92,7 @@ function createRunner({ permission = 'granted', sourceFailures = [], writeFailur
     section('function setPendingObsidianRetry(', 'function setWorkerState('),
     section('function updateStats(', 'async function fetchAssetAsDataUrlFromBackground('),
     section('function setStatus('),
-    'this.api = { run: runLinkBatchJob, retry: handleRetryObsidianWrite, pending: () => pendingObsidianRetry };'
+    'this.api = { run: job => { initializeDelivery(job, \"fixture\"); return runLinkBatchJob(job); }, retry: handleRetryObsidianWrite, pending: () => pendingObsidianRetry, delivery: () => deliveryRows };'
   ].join('\n'), Object.assign(context, { fixtureBinding: { handle } }));
   return { ...context.api, state, element,
     stats: () => [Number(element('success').textContent), Number(element('failure').textContent)],

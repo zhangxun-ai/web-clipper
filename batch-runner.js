@@ -62,6 +62,8 @@ let pendingObsidianRetry = null;
 let cachedObsidianBinding = null;
 let cachedObsidianBindingPromise = null;
 let stopRequested = false;
+let deliveryJob = null;
+let deliveryRows = [];
 const activeTaskTabIds = new Set();
 const resultEntryCache = new Set();
 const stopTaskButton = createStopTaskButton();
@@ -104,7 +106,7 @@ function setStopTaskActive(active) {
 
   stopTaskButton.hidden = false;
   stopTaskButton.disabled = stopRequested || !active;
-  stopTaskButton.textContent = stopRequested ? "正在停止" : "停止任务";
+  stopTaskButton.textContent = stopRequested ? (active ? "正在停止" : "任务已停止") : "停止任务";
 }
 
 function closeActiveTaskTabs() {
@@ -137,6 +139,7 @@ async function init() {
   jobStartedAt = Date.now();
   titleEl.textContent = job.title || (job.type === "course-export" ? "专栏导出任务" : "批量下载任务");
   metaEl.textContent = buildMeta(job);
+  initializeDelivery(job, jobId);
   setStatus(`任务已加载，共 ${totalCount} ${getJobUnitLabel(job)}，开始处理。`, "loading");
   updateStats(0, 0, 0, totalCount);
   setStopTaskActive(true);
@@ -149,6 +152,9 @@ async function init() {
       await runLinkBatchJob(job);
     }
   } finally {
+    finishDeliveryRows(stopRequested ? "stopped" : "failed");
+    workerStates = workerStates.map(worker => ({ ...worker, status: stopRequested ? "已停止" : "处理已结束", detail: "请查看上方逐篇结果" }));
+    renderWorkerPanel();
     stopElapsedClock();
     updateElapsedClock();
     setStopTaskActive(false);
@@ -174,6 +180,7 @@ async function runLinkBatchJob(job) {
       break;
     }
     const link = job.links[index];
+    setDeliveryRow(index, "running");
     updateStats(completedCount, successCount, failureCount, totalCount);
     setStatus(`正在处理 ${index + 1}/${totalCount} 篇`, "loading");
     appendLog(`开始处理 ${index + 1}/${totalCount}: ${link}`);
@@ -184,6 +191,7 @@ async function runLinkBatchJob(job) {
         format: "markdown",
         includeImages: job.includeImages !== false
       });
+      if (stopRequested) break;
       const result = normalizeWechatMarkdownResult(rawResult);
       outcome.result = result;
 
@@ -224,6 +232,7 @@ async function runLinkBatchJob(job) {
     }
 
     outcomes.push(outcome);
+    updateLinkDelivery(index, outcome, zipOutput);
     completedCount += 1;
     refreshOutcomes();
     if (!stopRequested) {
@@ -282,12 +291,16 @@ async function runLinkBatchJob(job) {
         conflictAction: "uniquify"
       });
       appendLog(`ZIP 已生成: ${zipFilename}`, "success");
+      for (let index = 0; index < outcomes.length; index += 1) {
+        if (outcomes[index].downloaded) setDeliveryState(index, "download", "success");
+      }
     } catch (error) {
       for (const outcome of outcomes.filter((entry) => entry.downloaded)) {
         outcome.downloaded = false;
         outcome.errors.download = `ZIP 下载失败：${error.message || "未知错误"}`;
       }
       appendLog(`ZIP 下载失败：${error.message || "未知错误"}`, "error");
+      outcomes.forEach((outcome, index) => updateLinkDelivery(index, outcome, false));
     } finally {
       setTimeout(() => URL.revokeObjectURL(zipUrl), 1000);
     }
@@ -310,6 +323,7 @@ async function runLinkBatchJob(job) {
   function refreshCompletion() {
     refreshOutcomes();
     updateStats(completedCount, successCount, failureCount, totalCount);
+    outcomes.forEach((outcome, index) => updateLinkDelivery(index, outcome, false));
     const localSuccessCount = outcomes.filter((entry) => entry.downloaded).length;
     const obsidianSuccessCount = outcomes.filter((entry) => entry.obsidianWritten).length;
     const obsidianFailures = outcomes.filter((entry) => entry.result && entry.errors.obsidian);
@@ -431,10 +445,16 @@ async function runCourseExportJob(job) {
 
     markdownFilename = courseExportBuilders.buildCourseFilename(title, "md");
     htmlFilename = courseExportBuilders.buildCourseFilename(title, "html");
-    await downloadGeneratedText(markdown, "text/markdown;charset=utf-8", markdownFilename, buildFallbackFilenameForExtension("md"));
-    appendLog(`已下载: ${markdownFilename}`, "success");
-    await downloadGeneratedText(html, "text/html;charset=utf-8", htmlFilename, buildFallbackFilenameForExtension("html"));
-    appendLog(`已下载: ${htmlFilename}`, "success");
+    try {
+      await downloadGeneratedText(markdown, "text/markdown;charset=utf-8", markdownFilename, buildFallbackFilenameForExtension("md"));
+      appendLog(`已下载: ${markdownFilename}`, "success");
+      await downloadGeneratedText(html, "text/html;charset=utf-8", htmlFilename, buildFallbackFilenameForExtension("html"));
+      appendLog(`已下载: ${htmlFilename}`, "success");
+      exportedChapters.forEach((chapter, index) => { if (chapter) setDeliveryState(index, "download", "success"); });
+    } catch (error) {
+      exportedChapters.forEach((chapter, index) => { if (chapter) setDeliveryState(index, "download", "failed", error.message || "文件下载失败"); });
+      appendLog(`文件下载未完成：${error.message || "未知错误"}`, "error");
+    }
   } else if (outputTarget.wantsObsidian) {
     setStatus("正在写入 Obsidian 知识库包…", "loading");
   }
@@ -451,13 +471,16 @@ async function runCourseExportJob(job) {
     try {
       const writeMessage = await writeCourseBundleToObsidian(obsidianPayload);
       obsidianOutcome = writeMessage ? `，${writeMessage}` : "";
+      exportedChapters.forEach((chapter, index) => { if (chapter) setDeliveryState(index, "obsidian", "success"); });
     } catch (error) {
       appendLog(`写入 Obsidian 失败：${error.message || "未知错误"}`, "error");
       obsidianOutcome = "，但写入 Obsidian 失败";
+      exportedChapters.forEach((chapter, index) => { if (chapter) setDeliveryState(index, "obsidian", "failed", error.message || "Obsidian 写入失败"); });
       if (isObsidianPermissionRetryable(error)) {
         setPendingObsidianRetry({
           kind: "course-bundle",
           payload: obsidianPayload,
+          chapterIndexes: exportedChapters.flatMap((chapter, index) => chapter ? [index] : []),
           successVariant: failureCount === 0 ? "ready" : "error"
         }, "当前任务文件已经导出完成，但写入 Obsidian 时浏览器没有给出可复用的写权限。点击下面的按钮后，可在本页重新授权并补写，无需重跑整次导出。");
         appendLog("已保留 Obsidian 写入内容，可在当前页面点击“授权并重试写入 Obsidian”。", "error");
@@ -466,7 +489,7 @@ async function runCourseExportJob(job) {
   }
 
   const elapsed = formatElapsedDuration(Date.now() - jobStartedAt);
-  if (failureCount === 0) {
+  if (failureCount === 0 && !deliveryRows.some(row => Object.values(row.states).includes("failed"))) {
     setStatus(buildCourseCompletionMessage({
       outputTarget,
       successCount,
@@ -504,6 +527,7 @@ async function runCourseExportJob(job) {
         }
 
         const chapter = job.chapters[index];
+        setDeliveryRow(index, "running");
         setWorkerState(0, `正在处理 ${index + 1}/${totalCount}`, chapter.title);
         appendLog(`接口获取 ${index + 1}/${totalCount}: ${chapter.title}`);
 
@@ -528,6 +552,7 @@ async function runCourseExportJob(job) {
             url: chapter.url,
             markdown
           };
+          setDeliveryRow(index, "cached");
           successCount += 1;
           consecutiveFailures = 0;
           setWorkerState(0, `已完成 ${index + 1}/${totalCount}`, chapter.title);
@@ -537,6 +562,7 @@ async function runCourseExportJob(job) {
             setWorkerState(0, "已停止", chapter.title);
             return;
           }
+          setDeliveryRow(index, "failed", error.message || "正文读取失败");
           failureCount += 1;
           consecutiveFailures += 1;
           if (consecutiveFailures >= 2) {
@@ -592,6 +618,7 @@ async function runCourseExportJob(job) {
         nextIndex += 1;
 
         const chapter = job.chapters[index];
+        setDeliveryRow(index, "running");
         setWorkerState(workerIndex, `正在处理 ${index + 1}/${totalCount}`, chapter.title);
         appendLog(`通道 ${workerIndex + 1} 开始处理 ${index + 1}/${totalCount}: ${chapter.title}`);
 
@@ -623,6 +650,7 @@ async function runCourseExportJob(job) {
             url: chapter.url,
             markdown
           };
+          setDeliveryRow(index, "cached");
           successCount += 1;
           consecutiveFailures = 0;
           slowdownMultiplier = Math.max(1, slowdownMultiplier - 0.15);
@@ -633,6 +661,7 @@ async function runCourseExportJob(job) {
             setWorkerState(workerIndex, "已停止", chapter.title);
             return;
           }
+          setDeliveryRow(index, "failed", error.message || "正文读取失败");
           failureCount += 1;
           consecutiveFailures += 1;
           if (consecutiveFailures >= 2) {
@@ -670,6 +699,15 @@ async function runCourseExportJob(job) {
 }
 
 function buildCourseCompletionMessage({ outputTarget, successCount, failureCount, obsidianOutcome, elapsed }) {
+  if (deliveryRows.some(row => Object.values(row.states).includes("failed"))) {
+    const outputs = Object.keys(deliveryRows[0]?.states || {});
+    const summary = outputs.map(output => {
+      const completed = deliveryRows.filter(row => row.states[output] === "success").length;
+      const failed = deliveryRows.filter(row => row.states[output] === "failed").length;
+      return `${output === "download" ? "本地输出" : "Obsidian"}完成 ${completed} 章、失败 ${failed} 章`;
+    });
+    return `输出未全部完成，${summary.join("；")}。总耗时 ${elapsed}。`;
+  }
   const base = failureCount === 0
     ? `专栏导出完成，共 ${successCount} 章`
     : `专栏导出完成，成功 ${successCount} 章，失败 ${failureCount} 章`;
@@ -1685,13 +1723,15 @@ async function handleRetryObsidianWrite() {
       }
       case "course-bundle":
         await writeCourseBundleToObsidianWithBinding(retryState.payload, binding);
+        for (const index of retryState.chapterIndexes || []) setDeliveryState(index, "obsidian", "success");
         break;
       default:
         throw new Error("当前任务类型暂不支持 Obsidian 重试");
     }
 
     setPendingObsidianRetry(null);
-    setStatus("Obsidian 补写成功，无需重新导出。", retryState.successVariant || "ready");
+    const unfinished = deliveryRows.some(row => Object.values(row.states).includes("failed"));
+    setStatus(unfinished ? "Obsidian 补写成功，其他未完成结果请查看下方。" : "Obsidian 补写成功，无需重新导出。", unfinished ? "error" : "ready");
     appendLog("Obsidian 补写成功，无需重新导出。", "success");
   } catch (error) {
     retryObsidianWriteButton.disabled = false;
@@ -1787,8 +1827,124 @@ function escapeHtml(value) {
 
 function updateStats(doneCount, successCount, failureCount, totalCount) {
   progressEl.textContent = `${doneCount} / ${totalCount}`;
+  if (deliveryJob) {
+    successCount = deliveryRows.filter(row => Object.values(row.states).every(state => state === "success")).length;
+    failureCount = deliveryRows.filter(row => Object.values(row.states).includes("failed")).length;
+  }
   successEl.textContent = String(successCount);
   failureEl.textContent = String(failureCount);
+  const progress = document.getElementById("deliveryProgress");
+  progress.max = totalCount || 1;
+  progress.value = doneCount;
+  progress.setAttribute("aria-valuetext", `已处理 ${doneCount}，共 ${totalCount}`);
+}
+
+function initializeDelivery(job, jobId) {
+  deliveryJob = job;
+  const outputs = getJobOutputTargetState(job);
+  const sourceEntries = job.type === "course-export" ? job.chapters : job.links;
+  deliveryRows = sourceEntries.map((entry, index) => ({
+    title: typeof entry === "string" ? (job.articles?.[index]?.title || entry) : entry.title || entry.url,
+    url: typeof entry === "string" ? entry : entry.url,
+    states: { ...(outputs.wantsDownload ? { download: "pending" } : {}), ...(outputs.wantsObsidian ? { obsidian: "pending" } : {}) },
+    errors: {}
+  }));
+  const format = job.type === "course-export" ? "Markdown + HTML" : job.zipOutput === false ? "逐篇 Markdown" : "本地 ZIP";
+  document.getElementById("contextOutput").textContent = outputs.label;
+  if (outputs.wantsObsidian && cachedObsidianBinding?.meta?.folderName) {
+    document.getElementById("contextOutput").textContent += ` · ${cachedObsidianBinding.meta.folderName}`;
+  }
+  document.getElementById("contextFormat").textContent = `${outputs.wantsDownload ? format + " · " : ""}${job.includeImages === false ? "不含正文图片" : "保留正文图片"}`;
+  document.getElementById("contextSource").textContent = job.courseTitle || job.account?.nickname || job.title || "本次链接列表";
+  const sourceLink = document.getElementById("contextSourceLink");
+  const sourceUrl = job.courseUrl || job.sourceUrl || "";
+  if (/^https?:\/\//u.test(sourceUrl)) { sourceLink.href = sourceUrl; sourceLink.hidden = false; }
+  document.getElementById("contextRange").textContent = `${getJobTotal(job)} ${getJobUnitLabel(job)} · 按本次确认的列表处理${job.dateRange?.startDate ? ` · ${job.dateRange.startDate} 至 ${job.dateRange.endDate}` : ""}`;
+  document.getElementById("contextRequest").textContent = `任务编号：${jobId}`;
+  document.getElementById("taskContext").hidden = false;
+  const list = document.getElementById("deliveryList");
+  deliveryRows.forEach((row, index) => {
+    const element = document.createElement("div");
+    element.className = "delivery-row";
+    element.dataset.index = String(index);
+    const title = document.createElement("strong");
+    title.className = "delivery-title";
+    title.textContent = row.title || `文章 ${index + 1}`;
+    element.append(title);
+    if (/^https?:\/\//u.test(row.url || "")) {
+      const link = document.createElement("a");
+      link.className = "delivery-source"; link.href = row.url; link.target = "_blank"; link.rel = "noopener noreferrer"; link.textContent = "查看这篇原文";
+      element.append(link);
+    }
+    const states = document.createElement("div"); states.className = "delivery-states";
+    for (const output of Object.keys(row.states)) {
+      const state = document.createElement("span"); state.className = "delivery-state"; state.dataset.output = output; states.append(state);
+    }
+    const error = document.createElement("p"); error.className = "delivery-error"; error.hidden = true;
+    element.append(states, error); list.append(element);
+  });
+  document.getElementById("deliveryResults").hidden = false;
+  renderDelivery();
+}
+
+function setDeliveryState(index, output, state, error = "") {
+  const row = deliveryRows[index];
+  if (!row || !(output in row.states)) return;
+  row.states[output] = state;
+  if (error) row.errors[output] = error; else delete row.errors[output];
+  renderDelivery(index);
+}
+
+function setDeliveryRow(index, state, error = "") {
+  for (const output of Object.keys(deliveryRows[index]?.states || {})) setDeliveryState(index, output, state, error);
+}
+
+function updateLinkDelivery(index, outcome, zipPending) {
+  const row = deliveryRows[index];
+  if (!row) return;
+  for (const output of Object.keys(row.states)) {
+    const error = outcome.errors.export || outcome.errors[output];
+    const success = output === "download" ? outcome.downloaded : outcome.obsidianWritten;
+    setDeliveryState(index, output, error ? "failed" : success ? (output === "download" && zipPending ? "cached" : "success") : "pending", error);
+  }
+}
+
+function finishDeliveryRows(state) {
+  deliveryRows.forEach((row, index) => {
+    for (const [output, current] of Object.entries(row.states)) {
+      if (["pending", "running", "cached"].includes(current)) setDeliveryState(index, output, state);
+    }
+  });
+  renderDelivery();
+}
+
+function renderDelivery(updatedIndex = null) {
+  if (!deliveryJob) return;
+  const names = { download: "本地", obsidian: "Obsidian" };
+  const labels = { pending: "待处理", running: "处理中", cached: "正文已读取，待输出", success: "已完成", failed: "未完成", stopped: "已停止" };
+  const list = document.getElementById("deliveryList");
+  deliveryRows.forEach((row, index) => {
+    if (updatedIndex !== null && index !== updatedIndex) return;
+    const element = list.children[index];
+    for (const [output, state] of Object.entries(row.states)) {
+      const pill = element.querySelector(`[data-output="${output}"]`);
+      pill.dataset.state = state; pill.textContent = `${names[output]} · ${labels[state] || "待核对"}`;
+    }
+    const error = element.querySelector(".delivery-error");
+    error.textContent = Object.values(row.errors).join("；"); error.hidden = !error.textContent;
+  });
+  const stats = document.getElementById("destinationStats");
+  stats.replaceChildren();
+  for (const output of Object.keys(deliveryRows[0]?.states || {})) {
+    const card = document.createElement("div"); card.className = "destination-stat"; card.dataset.output = output;
+    const title = document.createElement("strong"); title.textContent = names[output];
+    const copy = document.createElement("p");
+    const count = state => deliveryRows.filter(row => row.states[output] === state).length;
+    copy.textContent = `完成 ${count("success")} / ${deliveryRows.length} · 失败 ${count("failed")}${stopRequested ? ` · 停止 ${count("stopped")}` : ""}`;
+    card.append(title, copy); stats.append(card);
+  }
+  successEl.textContent = String(deliveryRows.filter(row => Object.values(row.states).every(state => state === "success")).length);
+  failureEl.textContent = String(deliveryRows.filter(row => Object.values(row.states).includes("failed")).length);
 }
 
 async function fetchAssetAsDataUrlFromBackground(url) {

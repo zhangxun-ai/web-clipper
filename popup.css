@@ -259,7 +259,7 @@ html, body {
 }
 
 .button-primary:active:not(:disabled) {
-  background: #62330c;
+  background: var(--ui-accent-hover);
 }
 
 .button-small {

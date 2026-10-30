@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>网页剪存 · 保存到飞书</title>
-    <link id="taskFavicon" rel="icon" type="image/png" href="icon/32.png">
+    <link id="taskFavicon" rel="icon" type="image/svg+xml" href="icon/brand.svg">
     <link rel="stylesheet" href="popup.css">
     <link rel="stylesheet" href="feishu-save.css">
   </head>
@@ -17,6 +17,11 @@
 
       <section id="connectionPanel" class="panel workspace-panel" data-state="checking">
         <div class="panel-head"><h2 id="connectionHeading">连接飞书</h2></div>
+        <ol id="connectionSteps" class="connection-steps" aria-label="首次连接步骤">
+          <li><span class="connection-step-number" aria-hidden="true">1</span><span>安装并检测连接器</span></li>
+          <li><span class="connection-step-number" aria-hidden="true">2</span><span>登录并授权飞书</span></li>
+          <li><span class="connection-step-number" aria-hidden="true">3</span><span>确认位置，继续保存</span></li>
+        </ol>
         <p id="connectionStatus" class="status status-loading" role="status">正在恢复已有登录状态…</p>
         <div class="actions">
           <button id="connect" class="button button-primary" type="button" hidden>登录飞书</button>
@@ -61,7 +66,7 @@
           <h2 id="jobHeading">正在保存</h2>
         </div>
         <p id="jobTitle" class="job-article-title"></p>
-        <p id="jobDestination" class="hint job-destination"></p>
+        <div class="fixed-target"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7V5h7l2 2h9v13H3V7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><div><span class="hint">本次固定目标 · 飞书知识库</span><p id="jobDestination" class="job-destination"></p></div></div>
         <div id="completionSummary" class="completion-summary" role="status" hidden>
           <span id="completionDuration" class="completion-duration" hidden>总耗时 <strong id="completionTime"></strong></span>
           <span>已核对图文与位置</span>
@@ -80,16 +85,18 @@
         </ol>
         <p id="jobStatus" class="status status-loading" role="status"></p>
         <a id="resultLink" class="button button-primary" target="_blank" rel="noopener noreferrer" hidden>在飞书中打开</a>
+        <div class="actions job-primary-actions">
+          <a id="copyLink" class="button" target="_blank" rel="noopener noreferrer" hidden>查看暂存文档</a>
+        </div>
+        <div id="jobFeedbackArea"></div>
         <details id="jobDetails" class="advanced-settings">
           <summary class="advanced-summary">查看处理详情</summary>
           <div class="advanced-content">
+            <div class="actions"><button id="resume" class="button" type="button" hidden>重试当前保存</button><button id="endTask" class="button" type="button" hidden>停止重试，保留暂存文档</button></div>
             <p id="jobDetailStatus" class="hint"></p>
             <p id="progressTiming" class="hint progress-timing"></p>
-            <div class="actions">
-              <button id="resume" class="button" type="button" hidden>重试当前保存</button>
-              <a id="copyLink" class="button" target="_blank" rel="noopener noreferrer" hidden>查看暂存文档</a>
-              <button id="endTask" class="button" type="button" hidden>停止重试，保留暂存文档</button>
-            </div>
+            <div id="jobIdentity" class="hint"></div>
+            <div id="jobAttempts" class="hint"></div>
 
           </div>
         </details>
@@ -99,6 +106,7 @@
         <summary id="saveFormSummary" class="advanced-summary" hidden>来源与保存位置</summary>
         <div class="source-section">
           <div class="panel-head"><h2>来源文章</h2></div>
+          <a id="sourceLink" class="source-link" target="_blank" rel="noopener noreferrer" hidden>查看原文</a>
           <p id="sourceTitle" class="article-title">当前网页</p>
           <details id="sourceSettings" class="advanced-settings">
             <summary class="advanced-summary">文章链接</summary>
@@ -109,7 +117,8 @@
           </details>
         </div>
         <div class="destination-section">
-          <div class="panel-head"><h2>保存位置</h2></div>
+          <div class="panel-head"><h2 id="targetHeading">保存位置</h2></div>
+          <p id="fixedTargetHint" class="hint" hidden>沿用发起这次请求时的位置，不受首页后续选择影响。</p>
           <p id="targetSummary" class="status status-loading" role="status">选择一个父页面，后续保存会自动沿用。</p>
           <details id="destinationSettings" class="advanced-settings">
             <summary id="destinationSummary" class="advanced-summary">选择保存位置</summary>
@@ -129,7 +138,7 @@
                   <p id="pickerPath" class="hint">选择知识库，再选择用来存放子文档的父页面。</p>
                   <div class="actions">
                     <button id="parentLevel" class="button button-small" type="button" disabled>返回上一级</button>
-                    <button id="useParent" class="button button-small" type="button" disabled>保存到此页下面</button>
+                    <button id="useParent" class="button button-small" type="button" disabled>使用此位置</button>
                   </div>
                   <ul id="nodes" class="node-list" aria-label="知识库页面"></ul>
                   <button id="moreNodes" class="button button-small" type="button" hidden>加载更多页面</button>
@@ -139,7 +148,7 @@
             </div>
           </details>
         </div>
-        <div class="save-action-area">
+        <div id="saveActionArea" class="save-action-area">
           <button id="save" class="button button-primary save-button" type="button" disabled>保存到飞书</button>
           <p id="saveFeedback" class="status status-error" role="alert" hidden></p>
           <p id="saveHint" class="hint">读取图文时请保持原网页打开，完成后会通知你。</p>

@@ -213,9 +213,9 @@ async function installFeishuFixture(worker) {
     await save.waitForFunction(() => document.getElementById("jobStatus").textContent.includes("保存成功"));
     assert.equal(await save.locator("#resultLink").getAttribute("href"), job.resultUrl);
     assert.equal(await save.locator("#save").isVisible(), false);
-    assert.equal(await save.locator("#saveForm").evaluate(element => element.open), false);
+    assert.equal(await save.locator("#saveForm").evaluate(element => element.open), true,
+      "the approved task sidebar keeps the source and frozen destination visible");
     if (process.env.FEISHU_UI_SCREENSHOT) await save.screenshot({ path: process.env.FEISHU_UI_SCREENSHOT.replace(/\.png$/, "-complete.png"), fullPage: true });
-    await save.locator("#saveFormSummary").click();
     await save.evaluate(() => refreshState());
     assert.equal(await save.locator("#saveForm").evaluate(element => element.open), true);
     assert.equal(await save.locator("#sourceSettings").isVisible(), true);

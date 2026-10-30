@@ -410,7 +410,9 @@ async function runScenario(directory, scenario) {
       assert.equal(fixture.state.calls.length, callsAtStop, "Non-retryable failure repeated a native call");
       assert.equal(await save.evaluate(() => chrome.alarms.get("feishuClipAutoResume")), undefined);
       assert.equal(await save.evaluate(async id => (await chrome.storage.local.get(id))[id], `feishuClipComplete:${jobId}`), undefined);
-      await save.waitForFunction(() => document.getElementById("jobStatus").classList.contains("status-error"));
+      await save.waitForFunction(unknown => unknown
+        ? document.getElementById("jobPanel").dataset.state === "unknown"
+        : document.getElementById("jobStatus").classList.contains("status-error"), scenario === "create-uncertain");
       assert.equal(await save.locator("#jobDetails").getAttribute("open"), null);
       assert.equal(await save.locator("#resume").isVisible(), false);
       assert.equal(await save.locator("#endTask").isVisible(), false);
@@ -421,7 +423,7 @@ async function runScenario(directory, scenario) {
         await source.close(); // Re-save must use the saved plan even without the original tab.
         let dialogs = 0;
         save.on("dialog", async dialog => { dialogs++; await dialog.dismiss(); });
-        assert.match(await save.locator("#saveHint").innerText(), /点击重新保存.*图文会复用/);
+        assert.match(await save.locator("#saveHint").innerText(), /新的创建尝试.*复用已读取图文.*保留旧尝试/);
         await save.locator("#save").click();
         await elsewhere.bringToFront();
         const resaved = await until(readJob, job => job?.stage === "complete", "One explicit re-save did not finish", 20000);
@@ -476,7 +478,7 @@ async function runScenario(directory, scenario) {
         `feishuClipComplete:${jobId}`), value => Boolean(value?.receipt?.viewedAt), "Returning to the real save page did not acknowledge its completed task");
       await save.reload();
       await save.locator("#completionSummary").waitFor();
-      assert.equal(await save.locator("#taskFavicon").getAttribute("href"), "icon/32.png");
+      assert.equal(await save.locator("#taskFavicon").getAttribute("href"), "icon/brand.svg");
       console.log(`PASS: ${scenario} completes after one save click with one created document`);
     }
     assert(!fixture.state.calls.some(call => call.action.startsWith("authorize_")));

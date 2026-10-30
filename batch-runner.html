@@ -9,6 +9,9 @@
   </head>
   <body>
     <main class="app">
+      <header class="brand-header"><img src="icon/brand.svg" width="34" height="34" alt=""><span>网页剪存</span><span class="header-context">批量导出</span></header>
+      <div class="task-layout">
+      <div class="task-main">
       <header class="hero">
         <h1 id="jobTitle">批量导出任务</h1>
         <p id="jobMeta" class="subtitle">正在准备任务…</p>
@@ -23,11 +26,11 @@
             <span id="jobProgress" class="stat-value">0 / 0</span>
           </div>
           <div class="stat-card stat-success">
-            <span class="stat-label">成功</span>
+            <span class="stat-label">所有目的地完成</span>
             <span id="jobSuccess" class="stat-value">0</span>
           </div>
           <div class="stat-card stat-failure">
-            <span class="stat-label">失败</span>
+            <span class="stat-label">有失败的文章</span>
             <span id="jobFailure" class="stat-value">0</span>
           </div>
           <div class="stat-card stat-secondary">
@@ -35,6 +38,9 @@
             <span id="jobElapsed" class="stat-value">00:00</span>
           </div>
         </div>
+
+        <progress id="deliveryProgress" max="1" value="0" aria-label="已处理数量"></progress>
+        <div id="destinationStats" class="destination-stats" aria-label="各目的地输出情况"></div>
 
         <div id="obsidianRetryPanel" class="retry-panel" hidden>
           <h2 class="panel-headline">写入 Obsidian 未完成</h2>
@@ -45,6 +51,8 @@
         </div>
 
         <div id="resultActions" class="result-actions"></div>
+
+        <section id="deliveryResults" hidden aria-labelledby="deliveryHeading"><h2 id="deliveryHeading" class="panel-headline">逐篇结果</h2><div id="deliveryList" class="delivery-list"></div></section>
 
         <div id="resultSummary" class="result-summary" hidden>
           <h2 class="panel-headline">导出结果</h2>
@@ -64,6 +72,14 @@
         <summary class="detail-toggle">运行日志</summary>
         <div id="jobLog" class="log" tabindex="0" role="region" aria-label="任务运行日志" aria-live="polite"></div>
       </details>
+      </div>
+      <aside id="taskContext" class="task-side" aria-label="本次任务信息" hidden>
+        <h2>本次输出</h2><p id="contextOutput" class="context-title"></p><p id="contextFormat" class="context-copy"></p>
+        <hr><h2>原始来源</h2><p id="contextSource" class="context-title"></p><a id="contextSourceLink" target="_blank" rel="noopener noreferrer" hidden>查看原文</a>
+        <hr><h2>处理范围</h2><p id="contextRange" class="context-copy"></p><p id="contextRequest" class="context-copy"></p>
+        <hr><p class="context-copy">请保留本页直到输出完成。未完成的 Obsidian 写入可在本页补写；关闭后不会在后台继续。</p>
+      </aside>
+      </div>
     </main>
 
     <script src="shared/export-url-utils.js"></script>

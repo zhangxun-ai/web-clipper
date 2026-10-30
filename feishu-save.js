@@ -56,6 +56,7 @@ function showConnection(phase, message) {
   $("connectionPanel").dataset.state = phase;
   $("connectionHeading").textContent = phase === "connected" ? "飞书已连接" : phase === "setup" ? "首次连接飞书" : "连接飞书";
   const unsupportedPlatform = connectorEnvironment.os !== "mac" && phase === "setup";
+  $("connectionSteps").hidden = phase === "connected" || unsupportedPlatform;
   $("useLocalExport").hidden = !unsupportedPlatform;
   $("connectorSetupHint").hidden = unsupportedPlatform;
   $("connect").hidden = phase !== "needs_auth";
@@ -159,6 +160,10 @@ function updateSourceTitle() {
   const source = currentSourceUrl();
   const job = currentJob();
   $("sourceTitle").textContent = job?.title || (source === sourceTitleUrl && sourceTitle) || source || "请添加要保存的文章";
+  const link = $("sourceLink");
+  link.hidden = !source;
+  if (source) link.href = source;
+  else link.removeAttribute("href");
 }
 
 const CONTENT_FAILURE_CODES = new Set(["UNSUPPORTED_CONTENT", "INVALID_CONTENT", "PAGE_CAPTURE_FAILED",
@@ -186,7 +191,7 @@ function retryLabel(job) {
 }
 
 function retryHint(job) {
-  if (CREATION_RESTART_ERRORS.has(job.errorCode)) return "点击重新保存即可继续，已读取的图文会复用。";
+  if (CREATION_RESTART_ERRORS.has(job.errorCode)) return "重新保存会开启一次新的创建尝试，复用已读取图文并保留旧尝试记录。仅在你点击后开始。";
   if (job.errorCode === "UNSUPPORTED_CONTENT") return "当前内容需要插件支持，或原文已调整后重新读取；重试不会跳过不支持的内容。";
   if (isContentFailure(job) && job.stage === "ready" && !job.copy?.token) return "重新读取会使用当前网页内容；正文读取成功后才会创建文档。";
   if (isContentFailure(job) && job.stage === "collecting") return "图片尚未读取完整；重试会继续读取图片。";
@@ -200,13 +205,20 @@ function updateSaveButton() {
   const active = Boolean(job && (latestState.running || job.autoRun));
   const paused = Boolean(job && !active && !["complete", "abandoned"].includes(job.stage));
   const form = $("saveForm");
+  document.querySelector(".clip-app").dataset.hasJob = String(Boolean(job));
+  const sourceSection = form.querySelector(".source-section");
+  const destinationSection = form.querySelector(".destination-section");
+  if (job && destinationSection.nextElementSibling !== sourceSection) form.insertBefore(destinationSection, sourceSection);
+  else if (!job && sourceSection.nextElementSibling !== destinationSection) form.insertBefore(sourceSection, destinationSection);
+  $("targetHeading").textContent = job ? "本次保存位置" : "保存位置";
+  $("fixedTargetHint").hidden = !job;
   const collapsed = alreadySaved || active;
   if (form.dataset.collapsed !== String(collapsed)) {
-    form.open = !collapsed;
+    form.open = true;
     form.dataset.collapsed = String(collapsed);
   }
   form.hidden = connectorEnvironment.os !== "mac" && connectionPhase === "setup";
-  $("saveFormSummary").hidden = !collapsed;
+  $("saveFormSummary").hidden = true;
   $("save").hidden = collapsed;
   $("save").disabled = connectionPhase !== "connected" || uiBusy || active || !source || !selectedTarget;
   $("save").textContent = alreadySaved ? "在飞书中打开" : active ? (latestState.queued ? "已加入保存队列" : "正在后台保存…")
@@ -215,11 +227,13 @@ function updateSaveButton() {
   $("saveHint").textContent = alreadySaved ? ""
     : paused ? retryHint(job)
     : "读取图文时请保持原网页打开，完成后会通知你。";
+  const actionArea = job ? $("jobFeedbackArea") : form;
+  if ($("saveActionArea").parentElement !== actionArea) actionArea.append($("saveActionArea"));
   updateSourceTitle();
 }
 
 function failureMessage(job) {
-  if (CREATION_RESTART_ERRORS.has(job.errorCode)) return "上次保存没有完成。点击“重新保存到飞书”，插件会复用已读取的正文和图片继续保存。";
+  if (CREATION_RESTART_ERRORS.has(job.errorCode)) return "上次文档创建结果不明，当前没有正在运行的保存步骤。原图文与旧尝试记录会保留。";
   if (AUTH_ERRORS.has(job.errorCode)) return "飞书授权需要更新。重新连接后，可继续完成这次保存。";
   // Converter and capture errors already describe the affected content. Keep
   // that concrete reason in the main status, using textContent at the caller.
@@ -263,15 +277,15 @@ function renderTabStatus() {
   const completed = job?.stage === "complete" && !job.error && !$("resultLink").hidden;
   const unread = completed && !latestState.completionViewed && !viewedCompletions.has(job.id) && !viewingPage();
   const icon = $("taskFavicon");
-  const path = unread ? "icon/save-complete.svg" : "icon/32.png";
+  const path = unread ? "icon/save-complete.svg" : "icon/brand.svg";
   if (icon.getAttribute("href") !== path) {
-    icon.type = unread ? "image/svg+xml" : "image/png";
+    icon.type = "image/svg+xml";
     icon.setAttribute("href", path);
   }
   const title = job?.title || "文章";
   document.title = !job ? "剪存到飞书知识库" : unread ? `已完成 · ${title}`
     : completed || job.stage === "abandoned" ? `剪存 · ${title}`
-    : latestState.running || job.autoRun ? `保存中 · ${title}` : `需处理 · ${title}`;
+    : stateSyncError ? `待确认 · ${title}` : latestState.running || job.autoRun ? `保存中 · ${title}` : `需处理 · ${title}`;
 }
 
 function acknowledgeCompletion() {
@@ -306,7 +320,8 @@ function renderCompletion(job) {
 
 function renderProgress(now = Date.now()) {
   const job = currentJob();
-  const terminal = !job || ["complete", "abandoned"].includes(job.stage);
+  const terminal = !job || ["complete", "abandoned"].includes(job.stage)
+    || (CREATION_RESTART_ERRORS.has(job.errorCode) && !latestState.running && !job.autoRun);
   $("jobProgress").hidden = terminal;
   if (terminal) return;
   const active = latestState.running || job.autoRun;
@@ -361,6 +376,17 @@ function renderProgress(now = Date.now()) {
   $("progressNotice").hidden = !notice;
   $("jobProgress").dataset.waiting = String(Boolean(syncLost || delayed || queued || retrying || recovering || !active));
   $("jobProgress").dataset.attention = String(Boolean(syncLost || delayed || !active));
+  if (syncLost) {
+    $("jobPanel").dataset.state = "unknown";
+    setText("jobHeading", "暂时无法确认最新进度");
+    setText("jobStatus", "与后台的状态同步已中断。请刷新此页查看原任务，勿重复保存。");
+    setText("progressPhase", "等待确认最新状态");
+    $("steps").querySelectorAll("[data-active]").forEach(step => {
+      step.dataset.active = "false";
+      step.removeAttribute("aria-current");
+    });
+    renderTabStatus();
+  }
 }
 
 function renderJob(state) {
@@ -386,6 +412,9 @@ function renderJob(state) {
   }
   $("jobTitle").textContent = job.title || job.source.url;
   $("jobDestination").textContent = `${job.target.spaceName ? `${job.target.spaceName} / ` : ""}${job.target.title}`;
+  $("jobIdentity").textContent = `本次请求：${job.requestId || "未记录"} · 保存记录：${job.id}`;
+  $("jobAttempts").textContent = CREATION_RESTART_ERRORS.has(job.errorCode)
+    ? "旧创建尝试记录会保留；此页显示当前请求的处理状态。" : "";
   const descriptions = {
     ready: "正在读取原文结构并确认目标位置…", copying: "正在恢复已有的副本任务…",
     collecting: "正在读取原文图片…",
@@ -406,21 +435,22 @@ function renderJob(state) {
   const completed = job.stage === "complete";
   const abandoned = job.stage === "abandoned";
   const paused = !completed && !abandoned && !state.running && !job.autoRun;
-  $("jobPanel").dataset.state = completed ? "complete" : abandoned ? "abandoned" : paused ? "paused" : "saving";
+  const unknown = paused && CREATION_RESTART_ERRORS.has(job.errorCode);
+  $("jobPanel").dataset.state = completed ? "complete" : abandoned ? "abandoned" : unknown ? "unknown" : paused ? "paused" : "saving";
   $("steps").hidden = completed || abandoned;
-  $("jobHeading").textContent = completed ? "已保存到飞书" : abandoned ? "已停止保存" : paused ? "这篇文章暂未保存完成" : "正在后台保存";
+  $("jobHeading").textContent = completed ? "已保存到飞书" : abandoned ? "已停止保存" : unknown ? "需要确认上次保存结果" : paused ? "这篇文章暂未保存完成" : state.queued ? "已加入保存队列" : "正在后台保存";
   const message = completed ? "保存成功，已核对图文与位置。" : abandoned ? `已停止保存。${preservedProgress(job)}` : state.queued
-    ? `已加入保存队列${state.queuePosition ? `，排在第 ${state.queuePosition} 位` : ""}。可以关闭此页，完成后会通知你。`
-    : (autoRetry || job.moveRecovering && job.autoRun) ? `正在自动完成保存。可以关闭此页，完成后会通知你。${["ready", "collecting"].includes(job.stage) ? "读取完成前请保持原网页打开。" : ""}`
-    : paused ? failureMessage(job) : ["ready", "collecting"].includes(job.stage)
+    ? `已加入保存队列${state.queuePosition ? `，排在第 ${state.queuePosition} 位` : ""}。尚未完成图文读取，请保持原网页打开。`
+    : (autoRetry || job.moveRecovering && job.autoRun) ? `正在自动完成保存。${["ready", "collecting", "copying"].includes(job.stage) ? "读取完成前请保持原网页打开。" : "图文已读取，可以关闭原网页。"}完成后会通知你。`
+    : paused ? failureMessage(job) : ["ready", "collecting", "copying"].includes(job.stage)
       ? "正在读取图文，请保持原网页打开。完成后会通知你。"
       : "图文已读取，可以关闭原网页和此页，完成后会通知你。";
-  status("jobStatus", message, paused ? "error" : completed ? "ready" : "loading");
+  status("jobStatus", message, paused && !unknown ? "error" : completed ? "ready" : "loading");
   const stages = { ready: 0, collecting: 0, importing: 1, copying: 1, copied: 2, moving: 2, pending: 2, move_failed: 2, verifying: 3, complete: 4, abandoned: -1 };
   Array.from($("steps").children).forEach((item, index) => {
-    item.dataset.active = String(index === stages[job.stage]);
+    item.dataset.active = String(!paused && !abandoned && !state.queued && index === stages[job.stage]);
     item.dataset.done = String(index < stages[job.stage]);
-    if (index === stages[job.stage]) item.setAttribute("aria-current", "step");
+    if (!paused && !abandoned && !state.queued && index === stages[job.stage]) item.setAttribute("aria-current", "step");
     else item.removeAttribute("aria-current");
   });
   $("resume").hidden = !paused;

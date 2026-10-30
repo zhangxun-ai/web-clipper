@@ -160,3 +160,122 @@ html, body {
   .clip-app .steps li { font-size: 11px; }
   .clip-app .actions .button { flex: 1 1 auto; }
 }
+
+/* C forest UX v2: the task and its frozen context remain visible together. */
+html, body { background: var(--ui-bg); }
+.clip-app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "header" "connection" "side" "footer";
+  width: calc(100% - 56px);
+  max-width: 760px;
+  margin: 24px auto 40px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  gap: 20px;
+}
+.clip-app .clip-header { grid-area: header; min-height: 64px; padding: 8px 150px 12px 0; border: 0; }
+.clip-header-icon { width: 34px; height: 34px; flex-basis: 34px; border-radius: 0; }
+.clip-app h1 { font-size: 19px; }
+.clip-app .clip-header-context { font-size: 12px; }
+.clip-app .workspace-panel { border: 1px solid var(--ui-border); border-radius: 14px; background: var(--ui-surface); padding: 28px; }
+.clip-app #connectionPanel { grid-area: connection; padding: 28px; border: 1px solid var(--ui-border); }
+.clip-app #connectionPanel[data-state="connected"] { top: 13px; right: 0; padding: 0; border: 0; }
+.clip-app #saveForm { grid-area: side; }
+.clip-app .clip-footer { grid-area: footer; border: 0; padding: 0; }
+.clip-app[data-has-job="true"] { max-width: 1120px; grid-template-columns: minmax(0, 1fr) 296px; grid-template-areas: "header header" "connection side" "job side" "footer footer"; gap: 20px 22px; }
+.clip-app[data-has-job="true"]:has(#connectionPanel[data-state="connected"]) { row-gap: 0; }
+.clip-app[data-has-job="true"] #jobPanel { grid-area: job; }
+.clip-app[data-has-job="true"] #saveForm { align-self: start; padding: 22px; position: sticky; top: 20px; }
+.clip-app[data-has-job="true"] .clip-footer { margin-top: 18px; }
+.clip-app[data-has-job="true"] .save-content-panel .article-title { font-size: 14px; line-height: 1.7; font-weight: 600; }
+.clip-app .save-content-panel .panel-head h2 { font-size: 13px; color: var(--ui-text); font-weight: 600; }
+.clip-app .source-link { display: inline-block; margin: 3px 0 8px; font-size: 12px; color: var(--ui-accent); text-underline-offset: 3px; }
+.clip-app .source-section { display: flex; flex-direction: column; }
+.clip-app .source-section .panel-head { order: 0; }
+.clip-app .source-section #sourceTitle { order: 1; }
+.clip-app .source-section #sourceLink { order: 2; }
+.clip-app .source-section #sourceSettings { order: 3; }
+.clip-app[data-has-job="true"] .destination-section { margin: 0 0 22px; padding: 0 0 20px; border-top: 0; border-bottom: 1px solid var(--ui-border); }
+.clip-app[data-has-job="true"] #saveForm[open] { display: flex; flex-direction: column; }
+.clip-app[data-has-job="true"] .destination-section { order: 0; }
+.clip-app[data-has-job="true"] .source-section { order: 1; }
+.clip-app[data-has-job="true"] .save-action-area { order: 2; }
+.clip-app #targetSummary.status-ready { font-size: 14px; line-height: 1.7; font-weight: 600; padding: 12px 14px; border: 1px solid var(--ui-border-strong); border-radius: 10px; background: var(--ui-surface-muted); }
+.clip-app #fixedTargetHint { font-size: 12px; margin-bottom: 12px; }
+.clip-app #jobPanel { display: flex; flex-direction: column; padding: 28px; }
+.clip-app #jobTitle { order: 0; margin: 0 0 14px; font-size: 23px; font-weight: 650; line-height: 1.5; }
+.clip-app .job-heading { order: 1; gap: 12px; margin: 0; }
+.clip-app #jobPanel .panel-head h2 { font-size: 20px; font-weight: 600; }
+.clip-app #completionSummary { order: 2; margin: 12px 0; }
+.clip-app #jobStatus { order: 3; margin: 10px 0 0; padding: 0; background: transparent; font-size: 13px; line-height: 1.75; }
+.clip-app #jobProgress { order: 4; margin: 22px 0 0; }
+.clip-app #steps { order: 5; display: flex; flex-direction: column; gap: 16px; margin: 24px 0; }
+.clip-app #steps li { flex-direction: row; text-align: left; gap: 12px; font-size: 13px; min-height: 28px; }
+.clip-app #steps li::before { flex: 0 0 26px; width: 26px; height: 26px; border: 1px solid var(--ui-border); background: transparent; }
+.clip-app #steps li::after { display: none; }
+.clip-app #steps li[data-active="true"]::before, .clip-app #steps li[data-done="true"]::before { background: var(--ui-accent-soft); border-color: transparent; color: var(--ui-accent); }
+.clip-app .fixed-target { order: 6; display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; margin: 8px 0 0; border: 1px solid var(--ui-border); border-radius: 9px; background: var(--ui-surface-muted); }
+.clip-app .fixed-target svg { color: var(--ui-accent); flex: none; margin-top: 3px; }
+.clip-app .fixed-target .hint { font-size: 12px; }
+.clip-app #jobDestination { margin: 2px 0 0; color: var(--ui-text); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.clip-app #resultLink { order: 7; margin-top: 18px; min-height: 44px; width: 100%; }
+.clip-app .job-primary-actions { order: 7; display: flex; flex-wrap: wrap; margin-top: 18px; }
+.clip-app .job-primary-actions:has(> :not([hidden])) { margin-bottom: 10px; }
+.clip-app #resume { flex: 1 1 100%; min-height: 44px; }
+.clip-app #copyLink { flex: 1; }
+.clip-app #endTask { flex: 1; font-size: 12px; }
+.clip-app #jobRetryHint { order: 8; margin: 0; padding: 10px 12px; color: var(--ui-accent); background: var(--ui-accent-soft); border-radius: 8px; font-size: 12px; }
+.clip-app #jobFeedbackArea { order: 9; }
+.clip-app #jobFeedbackArea:has(> :not([hidden])) { margin-top: 12px; }
+.clip-app #jobDetails { order: 10; margin-top: 20px; }
+.clip-app #jobIdentity, .clip-app #jobAttempts { font-size: 12px; overflow-wrap: anywhere; }
+.clip-app #jobAttempts:empty { display: none; }
+.clip-app .completion-icon { width: 34px; height: 34px; }
+.clip-app .completion-icon svg { width: 24px; height: 24px; }
+.clip-app #jobPanel[data-state="complete"] #jobTitle { margin-top: 0; }
+.clip-app #jobPanel[data-state="unknown"] #jobHeading { color: var(--ui-text); }
+.clip-app .text-input { border-color: var(--ui-border-strong); }
+.clip-app .button:focus-visible, .clip-app a:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
+.clip-app .button-primary { background: #405d37; border-color: #405d37; color: #fffef7; }
+.clip-app .button-primary:hover:not(:disabled) { background: #314c2b; border-color: #314c2b; }
+.clip-app ::selection { background: var(--ui-accent-soft); color: var(--ui-text); }
+@media (max-width: 800px) {
+  .clip-app, .clip-app[data-has-job="true"] { width: calc(100% - 36px); grid-template-columns: minmax(0, 1fr); grid-template-areas: "header" "connection" "job" "side" "footer"; margin: 16px auto 32px; gap: 18px; }
+  .clip-app[data-has-job="false"] { grid-template-areas: "header" "connection" "side" "footer"; }
+  .clip-app[data-has-job="true"]:has(#connectionPanel[data-state="connected"]) { row-gap: 18px; }
+  .clip-app #saveForm, .clip-app[data-has-job="true"] #saveForm { position: static; padding: 22px; }
+  .clip-app #jobPanel, .clip-app #connectionPanel { padding: 24px; }
+  .clip-app .clip-header { min-height: 58px; padding: 0 126px 0 0; }
+  .clip-app #connectionPanel[data-state="connected"] { top: 10px; right: 0; }
+  .clip-app .clip-footer { padding: 0; }
+  .clip-app[data-has-job="true"] .clip-footer { margin-top: 0; }
+}
+@media (max-width: 380px) {
+  .clip-app, .clip-app[data-has-job="true"] { width: calc(100% - 28px); margin-top: 12px; gap: 14px; }
+  .clip-app .clip-header { padding-right: 111px; gap: 8px; }
+  .clip-app h1 { font-size: 17px; }
+  .clip-app .clip-header-context { font-size: 11px; }
+  .clip-header-icon { width: 30px; height: 30px; flex-basis: 30px; }
+  .clip-app #jobPanel, .clip-app #connectionPanel, .clip-app #saveForm, .clip-app[data-has-job="true"] #saveForm { padding: 20px; }
+  .clip-app #jobTitle { font-size: 20px; }
+  .clip-app #jobPanel .panel-head h2 { font-size: 18px; }
+}
+.clip-app #connectionPanel[data-state="connected"] { grid-area: auto; }
+.clip-app .job-primary-actions:not(:has(> :not([hidden]))) { display: none; }
+.clip-app #jobFeedbackArea .save-action-area { display: flex; flex-direction: column; margin-top: 16px; }
+.clip-app #jobFeedbackArea .save-action-area:has(#save[hidden]):not(:has(#saveFeedback:not([hidden]))) { display: none; }
+.clip-app #jobFeedbackArea #saveHint { order: 0; text-align: left; padding: 10px 12px; color: var(--ui-accent); background: var(--ui-accent-soft); border-radius: 8px; }
+.clip-app #jobFeedbackArea #save { order: 1; min-height: 44px; }
+.clip-app #jobFeedbackArea #saveFeedback { order: 2; }
+.clip-app .connection-steps { display: grid; gap: 14px; padding: 0; margin: 18px 0 22px; list-style: none; }
+.clip-app .connection-steps li { display: flex; align-items: center; gap: 10px; color: var(--ui-text-muted); font-size: 13px; line-height: 1.65; }
+.clip-app .connection-step-number { display: grid; place-items: center; width: 25px; height: 25px; flex: none; border: 1px solid var(--ui-border); border-radius: 50%; font-variant-numeric: tabular-nums; font-size: 12px; }
+.clip-app #connectionPanel:is([data-state="setup"], [data-state="checking"]) .connection-steps li:first-child,
+.clip-app #connectionPanel:is([data-state="needs_auth"], [data-state="authorizing"]) .connection-steps li:nth-child(2) { color: var(--ui-accent); font-weight: 600; }
+.clip-app #connectionPanel:is([data-state="setup"], [data-state="checking"]) .connection-steps li:first-child .connection-step-number,
+.clip-app #connectionPanel:is([data-state="needs_auth"], [data-state="authorizing"]) .connection-steps li:nth-child(2) .connection-step-number { color: #fffef7; background: #405d37; border-color: #405d37; }
+.clip-app #connectionPanel:is([data-state="needs_auth"], [data-state="authorizing"]) .connection-steps li:first-child .connection-step-number { color: var(--ui-accent); background: var(--ui-accent-soft); border-color: transparent; }

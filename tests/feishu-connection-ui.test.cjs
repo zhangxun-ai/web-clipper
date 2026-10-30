@@ -10,6 +10,17 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
     addEventListener(name, handler) { this.events[name] = handler; }
     replaceChildren(...children) { this.children = children; }
     appendChild(child) { this.children.push(child); }
+    append(child) {
+      if (child.parentElement) child.parentElement.children = child.parentElement.children.filter(item => item !== child);
+      this.children.push(child); child.parentElement = this;
+    }
+    insertBefore(child, before) {
+      if (child.parentElement) child.parentElement.children = child.parentElement.children.filter(item => item !== child);
+      this.children.splice(Math.max(0, this.children.indexOf(before)), 0, child); child.parentElement = this;
+    }
+    get nextElementSibling() { return this.parentElement?.children[this.parentElement.children.indexOf(this) + 1] || null; }
+    querySelector(selector) { return el(selector); }
+    querySelectorAll() { return this.children; }
     setAttribute(name, value) { this[name] = value; }
     getAttribute(name) { return this[name] ?? null; }
     removeAttribute(name) { delete this[name]; }
@@ -29,7 +40,7 @@ async function page(overrides = {}, store = { target: { url: "https://my.feishu.
   const location = new URL(`chrome-extension://abcdefghijklmnopabcdefghijklmnop/feishu-save.html?source=https://my.feishu.cn/docx/Source&requestId=${store.requestId || requestId}${store.job ? "&jobId=" + store.job.id : ""}`);
   for (const [key, value] of Object.entries(environment.params || {})) location.searchParams.set(key, value);
   const context = {
-    document: { getElementById: el, createElement: () => new Element(), visibilityState: "hidden", hasFocus: () => false, addEventListener() {} },
+    document: { getElementById: el, querySelector: el, createElement: () => new Element(), visibilityState: "hidden", hasFocus: () => false, addEventListener() {} },
     FeishuWikiClip: clipApi, ConnectorOnboarding: onboarding, URL, URLSearchParams, Map, Set, Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     location, history: { replaceState(_state, _unused, url) { location.href = url; } }, crypto: require("node:crypto").webcrypto, setInterval() {},
     setTimeout(callback, delay) { delays.push(delay); callback(); },
@@ -380,7 +391,7 @@ test("only foreground viewing acknowledges the exact completion and keeps its ma
   assert.equal(p.context.location.searchParams.get("target"), job.target.url);
   p.context.document.hasFocus = () => false;
   p.context.renderJob({ job, running: false, completionViewed: true });
-  assert.equal(p.el("taskFavicon").getAttribute("href"), "icon/32.png");
+  assert.equal(p.el("taskFavicon").getAttribute("href"), "icon/brand.svg");
   assert.equal(p.context.document.title, "剪存 · 测试文章");
 });
 
@@ -540,8 +551,8 @@ test("editing the article hides the old result immediately and asks for the new 
   p.context.renderJob({ job: { ...uiJob(), stage: "complete", resultUrl: "https://my.feishu.cn/wiki/Saved" }, running: false });
   assert.equal(p.el("jobPanel").hidden, false);
   assert.equal(p.el("save").hidden, true);
-  assert.equal(p.el("saveForm").open, false);
-  assert.equal(p.el("saveFormSummary").hidden, false);
+  assert.equal(p.el("saveForm").open, true);
+  assert.equal(p.el("saveFormSummary").hidden, true);
   // Polling the same completed job must not close a user-reopened source form.
   p.el("saveForm").open = true;
   p.context.renderJob({ job: { ...uiJob(), stage: "complete", resultUrl: "https://my.feishu.cn/wiki/Saved" }, running: false });
@@ -560,7 +571,7 @@ test("editing the article hides the old result immediately and asks for the new 
 test("a queued article confirms background saving without asking the user to finish a different article", async () => {
   const p = await page();
   p.context.renderJob({ job: { ...uiJob(), autoRun: true }, running: true, queued: true, queuePosition: 2 });
-  assert.match(p.el("jobStatus").textContent, /保存队列.*第 2 位.*完成后会通知/);
+  assert.match(p.el("jobStatus").textContent, /保存队列.*第 2 位.*请保持原网页打开/);
   assert.equal(p.el("save").textContent, "已加入保存队列");
   assert.equal(p.el("resume").hidden, true);
   assert.equal(p.el("endTask").hidden, true);
@@ -625,7 +636,7 @@ test("an explicit re-save is the only user step for an uncertain old creation an
     p.context.renderJob({ job, running: false });
     assert.equal(p.el("save").textContent, "重新保存到飞书");
     assert.equal(p.el("resume").textContent, "重新保存到飞书");
-    assert.match(p.el("saveHint").textContent, /点击重新保存.*图文会复用/);
+    assert.match(p.el("saveHint").textContent, /新的创建尝试.*复用已读取图文.*保留旧尝试/);
     assert.doesNotMatch(p.el("saveHint").textContent, /会在后台完成/);
     assert.doesNotMatch(p.el("jobStatus").textContent, /核对|CREATE_/);
     await p.click("save");
@@ -813,12 +824,12 @@ test("permission and connector diagnostics keep their code out of the main statu
 });
 
 
-test("active saving collapses source controls while preserving a user-opened summary across polls", async () => {
+test("active saving keeps its source and frozen target visible across polls", async () => {
   const p = await page();
   const state = { job: { ...uiJob(), stage: "importing", autoRun: true }, running: true };
   p.context.renderJob(state);
-  assert.equal(p.el("saveForm").open, false);
-  assert.equal(p.el("saveFormSummary").hidden, false);
+  assert.equal(p.el("saveForm").open, true);
+  assert.equal(p.el("saveFormSummary").hidden, true);
   assert.equal(p.el("save").hidden, true);
   p.el("saveForm").open = true;
   p.context.renderJob(state);

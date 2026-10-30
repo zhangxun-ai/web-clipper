@@ -234,9 +234,10 @@ async function installNativeFixture(worker) {
     let popup = await context.newPage();
     await popup.goto(popupUrl);
     await popup.waitForFunction(() => document.getElementById("status")?.classList.contains("status-ready"));
-    await popup.locator("#toolsDrawer > summary").click();
+    await popup.locator("#navTools").click();
     await popup.locator("#categoryTabWechat").click();
     await popup.locator("#helperSeedUrl").fill(seedUrl);
+    if (!await popup.locator("#helperStartDate").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperStartDate").fill("2026-09-07");
     await popup.locator("#helperEndDate").fill("2026-09-07");
     assert.equal(await popup.locator("#openWechatMpLogin").count(), 0, "TikHub workflow must not require opening the old backend login");
@@ -257,6 +258,7 @@ async function installNativeFixture(worker) {
     assert.equal(await worker.evaluate(() => wechatHistoryFixture.calls.length), beforeDenied, "rejected content-script calls must not reach Native Messaging");
 
     const beforeListOriginals = originalArticleRequests.length;
+    if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperDownload").click();
     await popup.waitForFunction(() => !document.getElementById("helperArticleResults").hidden, null, { timeout: 45000 });
     await popup.waitForFunction(() => !document.getElementById("helperDownload").disabled);
@@ -275,7 +277,7 @@ async function installNativeFixture(worker) {
     await popup.close();
     popup = await context.newPage(); await popup.goto(popupUrl);
     await popup.waitForFunction(() => document.getElementById("status")?.classList.contains("status-ready"));
-    await popup.locator("#toolsDrawer > summary").click(); await popup.locator("#categoryTabWechat").click();
+    await popup.locator("#navTools").click(); await popup.locator("#categoryTabWechat").click();
     await popup.locator("#helperArticleResults").waitFor({ state: "visible" });
     assert.equal(await popup.locator(".history-article-check input").first().isChecked(), true, "selection survives closing/reopening the popup");
     assert.equal(await worker.evaluate(() => wechatHistoryFixture.calls.filter(call => call.action === "tikhub_article_page").length), 2, "reopening a listed range does not buy more pages");
@@ -399,7 +401,8 @@ async function installNativeFixture(worker) {
       await resetScenario(pages);
       const before = await worker.evaluate(() => wechatHistoryFixture.jobs.length);
       const downloadsBefore = (await worker.evaluate(() => chrome.downloads.search({ state: "complete" }))).length;
-      await popup.locator("#helperDownload").click();
+      if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
+    await popup.locator("#helperDownload").click();
       await popup.waitForFunction(() => document.getElementById("helperStatus")?.classList.contains("status-error"), null, { timeout: 45000 });
       await popup.waitForFunction(() => !document.getElementById("helperDownload").disabled);
       assert.equal(await worker.evaluate(() => wechatHistoryFixture.jobs.length), before, `${name} cannot create a successful batch job`);
@@ -450,6 +453,7 @@ async function installNativeFixture(worker) {
     await resetScenario(successfulPages, 700);
     await worker.evaluate(() => { wechatHistoryFixture.pageError = { index: 1, code: "TIKHUB_HTTP_400", error: "服务拒绝此页请求", details: { httpStatus: 400, elapsedMs: 700, category: "http_error", cached: false } }; });
     const beforePartial = await worker.evaluate(() => ({ calls: wechatHistoryFixture.calls.length, jobs: wechatHistoryFixture.jobs.length }));
+    if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperDownload").click();
     await popup.waitForFunction(() => document.querySelectorAll(".history-article").length === 1 && document.getElementById("helperDownload").disabled);
     assert.equal(await popup.locator(".history-article-check input").first().isDisabled(), false, "first page is selectable while the next page is still loading");
@@ -465,17 +469,24 @@ async function installNativeFixture(worker) {
     assert.equal(failedPartial.errorDetails.httpStatus, 400);
     assert.equal(await worker.evaluate(() => wechatHistoryFixture.jobs.length), beforePartial.jobs);
     await worker.evaluate(() => { wechatHistoryFixture.pageError = null; wechatHistoryFixture.delayMs = 0; });
+    if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperDownload").click();
     await popup.waitForFunction(() => !document.getElementById("helperDownload").disabled && document.querySelectorAll(".history-article").length === 2);
     const continuedCalls = await worker.evaluate(before => wechatHistoryFixture.calls.slice(before).filter(call => call.action === "tikhub_article_page"), beforePartial.calls);
     assert.deepEqual(continuedCalls.map(call => call.params.offset || ""), ["", cursor, cursor], "continue retries only the failed opaque cursor");
     assert.equal(await popup.locator(".history-article-check input").first().isChecked(), true, "selection persists through continuation");
     const beforeCached = await worker.evaluate(() => wechatHistoryFixture.calls.filter(call => call.action === "tikhub_article_page").length);
+    if (!await popup.locator("#helperStartDate").isVisible()) await popup.locator("#wechatConditions > summary").click();
+    const reviewedSummary = await popup.locator("#helperArticleSummary").textContent();
     await popup.locator("#helperStartDate").fill("2026-09-06");
+    assert.equal(await popup.locator("#helperArticleSummary").textContent(), reviewedSummary, "editing conditions cannot relabel the previously reviewed result list");
+    assert.equal(await popup.locator("#helperArticleResults").isVisible(), true, "last queried results stay available while editing a new draft range");
+    if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperDownload").click();
     await popup.waitForFunction(() => !document.getElementById("helperDownload").disabled && document.querySelectorAll(".history-article").length === 3);
     assert.equal(await worker.evaluate(() => wechatHistoryFixture.calls.filter(call => call.action === "tikhub_article_page").length), beforeCached, "a completed account index filters another range without a new paid request");
     assert.equal(await worker.evaluate(() => chrome.storage.local.get("wechatHistoryView").then(value => value.wechatHistoryView.cached)), true);
+    if (!await popup.locator("#helperStartDate").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperStartDate").fill("2026-09-07");
     console.log("PASS: progressive list stays selectable during HTTP 400, error preserves selections, continuation only retries its cursor, and cross-range cache makes no new paid request");
 
@@ -483,6 +494,7 @@ async function installNativeFixture(worker) {
     // restores the result without buying the pages again.
     await resetScenario(successfulPages, 2000);
     const beforeClose = await worker.evaluate(() => ({ jobs: wechatHistoryFixture.jobs.length, requests: wechatHistoryFixture.requests.length }));
+    if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperDownload").click();
     await worker.evaluate(async () => {
       const until = Date.now() + 30000;
@@ -502,7 +514,7 @@ async function installNativeFixture(worker) {
     assert.equal(await worker.evaluate(() => wechatHistoryFixture.jobs.length), beforeClose.jobs);
     popup = await context.newPage(); await popup.goto(popupUrl);
     await popup.waitForFunction(() => document.getElementById("status")?.classList.contains("status-ready"));
-    await popup.locator("#toolsDrawer > summary").click(); await popup.locator("#categoryTabWechat").click();
+    await popup.locator("#navTools").click(); await popup.locator("#categoryTabWechat").click();
     await popup.locator("#helperArticleResults").waitFor({ state: "visible" });
     assert.equal(await popup.locator(".history-article").count(), 2);
     assert.equal(await worker.evaluate(() => wechatHistoryFixture.pageIndex), 2);
@@ -524,6 +536,7 @@ async function installNativeFixture(worker) {
       document.getElementById("includeImages").dispatchEvent(new Event("change"));
       document.getElementById("helperOutputFormat").value = "zip";
     });
+    await popup.locator('#navClip').click();
     await popup.locator('button[data-destination="obsidian"]').click();
     await popup.close();
     await worker.evaluate(() => chrome.storage.local.set({ includeImages: true, outputTarget: "obsidian", clipperDestination: "obsidian" }));
@@ -552,9 +565,11 @@ async function installNativeFixture(worker) {
     await resetScenario([{ ...seedOnlyPage, isEnd: true, nextOffset: "" }]);
     popup = await context.newPage(); await popup.goto(popupUrl);
     await popup.waitForFunction(() => document.getElementById("status")?.classList.contains("status-ready"));
-    await popup.locator("#toolsDrawer > summary").click(); await popup.locator("#categoryTabWechat").click();
+    await popup.locator("#navTools").click(); await popup.locator("#categoryTabWechat").click();
+    if (!await popup.locator("#helperStartDate").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperStartDate").fill("2026-09-09"); await popup.locator("#helperEndDate").fill("2026-09-09");
-    assert.equal(await popup.locator("#helperArticleResults").isHidden(), true, "changing the date cannot leave the old account/range selection visible");
+    assert.equal(await popup.locator("#helperArticleResults").isHidden(), true, "a fresh range with no persisted list exposes no stale selection");
+    if (!await popup.locator("#helperDownload").isVisible()) await popup.locator("#wechatConditions > summary").click();
     await popup.locator("#helperDownload").click();
     await popup.waitForFunction(() => !document.getElementById("helperArticleResults").hidden, null, { timeout: 45000 });
     assert.equal(await popup.locator(".history-article").count(), 0);

@@ -28,6 +28,7 @@ const root = path.resolve(__dirname, "../..");
         progress: { phase: "collecting", completed: 7, total: 20 }
       } };
       chrome.runtime.sendMessage = (message, callback) => {
+        (window.saveUiCalls ||= []).push(structuredClone(message));
         if (message.action === "state") {
           if (window.failState) return callback({ ok: false, code: "EXTENSION_RELOADED", error: "fixture: disconnected" });
           return callback({ ok: true, data: structuredClone(window.progressFixture) });
@@ -90,6 +91,43 @@ const root = path.resolve(__dirname, "../..");
     await page.evaluate(() => { progressFixture.job.stage = "ready"; });
     await page.waitForFunction(() => document.getElementById("progressBar").getAttribute("value") === null);
     assert.equal(await page.locator("#progressBar").evaluate(el => getComputedStyle(el, "::-webkit-progress-bar").animationName), "none");
+    await page.evaluate(() => {
+      progressFixture.queued = true;
+      progressFixture.running = true;
+      progressFixture.job.autoRun = true;
+    });
+    await page.waitForFunction(() => document.getElementById("jobHeading").textContent === "已加入保存队列");
+    assert.match(await page.locator("#jobStatus").textContent(), /请保持原网页打开/);
+    assert.doesNotMatch(await page.locator("#jobStatus").textContent(), /可以关闭/);
+    assert.equal(await page.locator('#steps [data-active="true"]').count(), 0,
+      "a queued task has no running save step");
+    await page.evaluate(() => {
+      progressFixture.queued = false;
+      progressFixture.running = false;
+      Object.assign(progressFixture.job, { stage: "importing", autoRun: false,
+        errorCode: "CREATE_UNCERTAIN", error: "fixture: creation unknown", progress: null });
+    });
+    await page.waitForFunction(() => document.getElementById("jobPanel").dataset.state === "unknown");
+    assert.equal(await page.locator("#jobHeading").textContent(), "需要确认上次保存结果");
+    assert.equal(await page.locator("#resume").textContent(), "重新保存到飞书");
+    assert.equal(await page.locator("#save").isVisible(), true);
+    assert.equal(await page.locator('#steps [data-active="true"]').count(), 0);
+    assert.equal(await page.locator("#progressBar").isVisible(), false);
+    assert.equal(await page.locator("#saveForm").evaluate(element => element.open), true);
+    assert.match(await page.locator("#jobDestination").textContent(), /课程研发库 \/ 外部内容/);
+    assert.equal((await page.evaluate(() => saveUiCalls)).filter(call => ["start", "resume"].includes(call.action)).length, 0,
+      "rendering an uncertain result cannot create or resume documents");
+    if (process.env.UI_SCREENSHOT_DIR) {
+      for (const width of [1100, 390, 320]) {
+        await page.setViewportSize({ width, height: 920 });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+        await page.screenshot({ path: path.join(process.env.UI_SCREENSHOT_DIR, `save-unknown-${width}.png`), fullPage: true });
+      }
+    }
+    await page.locator("#save").click();
+    const resumeCall = (await page.evaluate(() => saveUiCalls)).find(call => call.action === "resume");
+    assert.equal(resumeCall.jobId, "progress-ui");
+    assert.equal(resumeCall.restartCreation, true, "only the user's explicit action starts a new creation attempt");
     assert.deepEqual(errors, []);
     console.log("PASS: visible stage transitions, real polling/timer, completion, disconnect, reload, reduced motion and 1100/390/320px layouts (fixture responses)");
   } finally { await context.close(); }

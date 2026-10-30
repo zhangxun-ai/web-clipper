@@ -10,9 +10,9 @@ body {
 
 .app {
   width: 100%;
-  max-width: 928px;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 48px 32px;
+  padding: 24px 28px 48px;
   display: grid;
   gap: 16px;
 }
@@ -24,7 +24,7 @@ body {
 
 .hero h1 {
   margin: 0 0 8px;
-  font-size: 26px;
+  font-size: 23px;
   font-weight: 650;
   line-height: 1.4;
   letter-spacing: -0.02em;
@@ -49,10 +49,40 @@ body {
 }
 
 .summary-panel {
-  padding: 24px;
+  padding: 24px 0 0;
   display: grid;
   gap: 24px;
 }
+
+.brand-header { display:flex; align-items:center; gap:10px; min-height:48px; font-size:15px; font-weight:600; }
+.header-context { margin-left:8px; padding-left:18px; border-left:1px solid var(--ui-border); font-size:13px; font-weight:400; color:var(--ui-text-muted); }
+.task-layout { display:grid; grid-template-columns:minmax(0,1fr) 270px; gap:22px; align-items:start; }
+.task-main { min-width:0; padding:28px; border:1px solid var(--ui-border); border-radius:14px; background:var(--ui-surface); }
+.task-main>.panel { border:0; background:transparent; }
+.task-main>.detail-card { border-top:1px solid var(--ui-border); border-radius:0; }
+.task-main>.detail-card .detail-toggle { padding-left:0; padding-right:0; }
+.task-side { min-width:0; position:sticky; top:24px; padding:22px; border:1px solid var(--ui-border); border-radius:12px; background:var(--ui-surface); }
+.task-side h2 { margin:0 0 8px; font-size:13px; font-weight:600; }
+.task-side hr { border:0; border-top:1px solid var(--ui-border); margin:20px 0; }
+.context-title { font-size:14px; font-weight:600; margin:0 0 6px; overflow-wrap:anywhere; }
+.context-copy { font-size:12px; line-height:1.7; color:var(--ui-text-muted); margin:0; overflow-wrap:anywhere; }
+.task-side a,.delivery-source { color:var(--ui-accent); font-size:12px; text-underline-offset:3px; }
+#deliveryProgress { width:100%; height:7px; border:0; border-radius:8px; background:var(--ui-surface-muted); accent-color:var(--ui-accent); }
+#deliveryProgress::-webkit-progress-bar { background:var(--ui-surface-muted); border-radius:8px; }
+#deliveryProgress::-webkit-progress-value { background:var(--ui-accent); border-radius:8px; }
+.destination-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr)); gap:12px; }
+.destination-stat { background:var(--ui-surface-muted); padding:12px 14px; border:1px solid var(--ui-border); border-radius:9px; }
+.destination-stat strong { font-size:14px; font-weight:600; }
+.destination-stat p { font-size:12px; color:var(--ui-text-muted); margin:4px 0 0; }
+.delivery-row { padding:16px 0; border-bottom:1px solid var(--ui-border); min-width:0; }
+.delivery-row:last-child { border:0; padding-bottom:0; }
+.delivery-title { display:block; font-size:13px; line-height:1.7; font-weight:600; overflow-wrap:anywhere; }
+.delivery-states { display:flex; gap:7px; flex-wrap:wrap; margin-top:8px; }
+.delivery-state { border-radius:5px; background:var(--ui-surface-muted); color:var(--ui-text-muted); font-size:12px; padding:3px 7px; }
+.delivery-state[data-state="success"] { background:var(--ui-success-soft); color:var(--ui-success); }
+.delivery-state[data-state="failed"] { background:var(--ui-danger-soft); color:var(--ui-danger); }
+.delivery-state[data-state="running"],.delivery-state[data-state="cached"] { background:var(--ui-accent-soft); color:var(--ui-accent-hover); }
+.delivery-error { margin:6px 0 0; color:var(--ui-danger); font-size:12px; line-height:1.65; overflow-wrap:anywhere; }
 
 .status {
   padding: 12px 14px;
@@ -100,7 +130,7 @@ body {
 
 .stat-value {
   color: var(--ui-text);
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 650;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
@@ -387,7 +417,7 @@ body {
   }
 
   .summary-panel {
-    padding: 20px;
+    padding: 20px 0 0;
     gap: 20px;
   }
 
@@ -425,7 +455,16 @@ body {
   }
 
   .summary-panel {
-    padding: 16px;
+    padding: 16px 0 0;
   }
 
 }
+
+@media (max-width:800px) {
+  .task-layout { grid-template-columns:1fr; }
+  .task-side { position:static; grid-row:1; padding:18px 20px; }
+  .task-side hr { margin:12px 0; }
+  .task-main { padding:24px; }
+  .app { padding:18px; }
+}
+@media (max-width:380px) { .app { padding:12px; } .task-main { padding:20px; } .task-side { padding:18px; } .brand-header { gap:8px; } }

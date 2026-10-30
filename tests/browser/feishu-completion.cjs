@@ -155,7 +155,7 @@ async function installPageFixture(page) {
     const first = await makePage(initialJobs[0]);
     await focus(first);
     assert.equal(await first.title(), `保存中 · ${initialJobs[0].title}`);
-    assert.equal(await iconPath(first), "/icon/32.png");
+    assert.equal(await iconPath(first), "/icon/brand.svg");
     assert.equal(await first.locator("#completionSummary").isVisible(), false);
     const second = await makePage(initialJobs[1]);
     await focus(second, first);
@@ -176,7 +176,7 @@ async function installPageFixture(page) {
     assert.equal(await normalizedTime(first), "2分36秒");
     assert.equal((await acknowledgements()).length, 0, "background completion must remain unread");
     assert.equal(await second.locator("#completionSummary").isVisible(), false);
-    assert.equal(await iconPath(second), "/icon/32.png");
+    assert.equal(await iconPath(second), "/icon/brand.svg");
     console.log("PASS: real background completion updates title/favicon through storage events and does not acknowledge unread results");
 
     const foreground = await makePage(initialJobs[2]);
@@ -188,7 +188,7 @@ async function installPageFixture(page) {
     assert.equal((await acknowledgements()).length, 0);
     await focus(first, foreground);
     await waitUntilViewed(first, initialJobs[0].id);
-    assert.equal(await iconPath(first), "/icon/32.png");
+    assert.equal(await iconPath(first), "/icon/brand.svg");
     assert.equal(await normalizedTime(first), "2分36秒");
     assert.equal((await storedJob(initialJobs[1].id)).completionViewed, false,
       "viewing one request must not acknowledge another request for the same article");
@@ -206,7 +206,7 @@ async function installPageFixture(page) {
     await focusSessions.get(first).send("Emulation.setFocusEmulationEnabled", { enabled: false });
     await first.locator("#completionSummary").waitFor();
     assert.equal(await first.evaluate(() => document.hasFocus()), false);
-    assert.equal(await iconPath(first), "/icon/32.png");
+    assert.equal(await iconPath(first), "/icon/brand.svg");
     assert.equal(await first.title(), `剪存 · ${initialJobs[0].title}`);
     assert.equal(await normalizedTime(first), "2分36秒", "completed duration remains fixed across elapsed time and reload");
     assert.equal((await acknowledgements()).filter(receipt => receipt.jobId === initialJobs[0].id).length, 1);
@@ -217,7 +217,7 @@ async function installPageFixture(page) {
     await foreground.evaluate(() => { completionFixture.faviconChanges.length = 0; });
     await completeJob(initialJobs[2].id);
     await waitUntilViewed(foreground, initialJobs[2].id);
-    assert.equal(await iconPath(foreground), "/icon/32.png");
+    assert.equal(await iconPath(foreground), "/icon/brand.svg");
     assert.equal(await normalizedTime(foreground), "8秒");
     const changes = await foreground.evaluate(() => completionFixture.faviconChanges);
     assert(!changes.some(change => /save-complete\.svg/.test(`${change.before || ""} ${change.after || ""}`)),

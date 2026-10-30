@@ -4,10 +4,11 @@ Chrome Manifest V3 扩展，无打包步骤，直接加载项目根目录。产�
 
 ## 按任务阅读
 
-- 首页与视觉：`popup.html`、`popup-layout.css`、`shared/ui-tokens.css`；最近飞书任务由 `shared/recent-save-model.js` 整理，popup 的 `overview` 仅允许读取状态。首页保存动作固定点击时显示的目标，已有任务链接保留原请求身份。
+- 首页与视觉：`popup.html`、`popup-layout.css`、`shared/ui-tokens.css`、`shared/popup-navigation.js`；森林版行为和验收见 [实施记录](docs/forest-ui-implementation.md)。剪存/工具/记录/设置保留原表单节点，`popupToolDraft` 保存工具草稿；本次输出不被默认设置覆盖，公众号展开管理页通过原 `sourceTabId/source` 固定来源，读取/选择列表不自动触发收费查询；最近飞书任务由 `shared/recent-save-model.js` 整理，popup 的 `overview` 仅允许读取状态。首页保存动作固定点击时显示的目标，已有任务链接保留原请求身份。
 
-- 本地导出：`popup.js`、`content-scripts/feishu-exporter.js` 和 `shared/`。单篇带图下载为根目录 Markdown 加 `assets/<保存标识>/` 相对路径附件，图片完整下载并核对位置后再生成文章；不能退回 Base64 或远程链接冒充离线成功。Obsidian 继续自动写入独立附件目录。飞书本地带图读取完整分辨率预览，`image-asset.js` 必须先于 exporter 注入；更新的导出消息为 `feishu-export:export-document-v2`，用于升级已打开的旧页面。Google Docs 使用原生导出，避免重新依赖画布编辑器 DOM。
+- 本地导出：`popup.js`、`content-scripts/feishu-exporter.js` 和 `shared/`。单篇带图下载为根目录 Markdown 加 `assets/<保存标识>/` 相对路径附件，图片完整下载并核对位置后再生成文章；不能退回 Base64 或远程链接冒充离线成功。Obsidian 继续自动写入独立附件目录。飞书本地带图读取完整分辨率预览，`image-asset.js` 必须先于 exporter 注入；导出使用 `feishu-export:export-document-v3` 及 256 KiB 分片传输，必须主动升级已打开的旧页面、核对每片长度并释放暂存，不能把全部原图放进单条消息。飞书 MP4 附件以完整字节及相对路径留档，已知目录组件按原位置输出标题链接；未知组件仍须报错。Google Docs 使用原生导出，避免重新依赖画布编辑器 DOM。
 - 公众号范围下载：[配置、日期和恢复说明](docs/wechat-history-download.md)。`shared/wechat-history-service.js` 持久化查询列表、勾选及下载时的选项；查询不导出，选文下载仅接受当前已持久化列表内文章；未收集完的列表也可选，下载前核验原文身份和日期，默认本地 ZIP，不继承首页 Obsidian。`helper/wechat_native_host.py` / `tikhub_wechat.py` 独立注册 `com.wechat.clipper`，密钥仅在本机 `.env`。素材时间不得当发表时间，只有供应商末页才确认收集完成。`batch-runner.js` 按实际目的地输出结果统计，Obsidian 写入失败不能计为成功。
+- X 推文与 Article：`content-scripts/feishu-exporter.js` 按来源 status ID 和自身时间链接定位，共用界面清理，不能回退长评论或仅预览。保留引用预览、可核验原文链接、`nav` 轮播图片及主文换行；清理前后核对内容，不能全局忽略 SVG。相关回归：`tests/browser/x-article.cjs`、`x-post.cjs`、`x-extension.cjs`（真实 activeTab 与 MV3，Native/飞书响应为模拟）。X 提取改动需执行这三项浏览器回归及 `tests/web-capture-injection.test.cjs`，覆盖普通推文、Article 和旧页面升级。
 - 飞书知识库剪存：[功能、接口和恢复说明](docs/feishu-wiki-clip.md)。从 `shared/feishu-wiki-clip.js` 和 `helper/feishu_native_host.py` 阅读数据完整性边界。图片格式统一由 `shared/image-asset.js` 按字节识别并解码；不能直接把 HTTP Content-Type 当作真实格式。
 - 首次连接与安装提示词：[Mac 快速连接](docs/connector-setup.md)，生成逻辑及固定源码校验信息见 `shared/connector-onboarding.js`。Windows 仅本地导出；不能将浏览器系统模拟测试当作本机连接器验收。
 - `release-cws/` 和 `release/` 是历史商店产物；开发修改根目录源文件，发布需独立验证和授权。

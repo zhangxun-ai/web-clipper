@@ -71,10 +71,11 @@ const second = { ...first, id: 'recent-second', requestId: requests[1], title: '
         throw error;
       });
     assert.equal(await popup.locator('#docTitle').textContent(), '从保存页返回的原文章');
-    assert.equal(await popup.locator('#destinationValue').textContent(), '资料库 / 产品研究');
+    assert.equal(await popup.locator('#destinationSpace').textContent(), '资料库');
+    assert.equal(await popup.locator('#destinationValue').textContent(), '产品研究');
     const primary = await popup.locator('#openFeishuSave').boundingBox();
     assert(primary.y + primary.height < 600, 'Feishu primary must be visible at 452x600');
-    await popup.locator('#recentSaves > summary').click();
+    await popup.locator('#navRecords').click();
     assert.equal(await popup.locator('#recentSaveList li').count(), 2, 'same article saves remain separate requests');
     assert.equal(await popup.locator('[data-job-id="recent-first"] .recent-title').textContent(), first.title,
       'legacy history cannot replace a newer queue record after overview returns');
@@ -106,6 +107,7 @@ const second = { ...first, id: 'recent-second', requestId: requests[1], title: '
     assert.deepEqual(await worker.evaluate(() => globalThis.fixtureNativeCalls), ['status'], 'storage changes never poll native status');
     console.log('PASS: recent saves retain two requests, verified result and exact recovery routes; status failure keeps history; storage updates do not poll native');
 
+    await popup.locator('#navClip').click();
     await popup.locator('button[data-destination="local"]').click();
     await popup.waitForFunction(async () => (await chrome.storage.local.get('clipperDestination')).clipperDestination === 'local');
     await popup.reload();
