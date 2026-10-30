@@ -31,6 +31,8 @@ CREATE_MARKER_PREFIX = "飞书剪存-"
 CREATE_RECOVERY_SECONDS = 300
 MIMES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
          "image/webp": ".webp", "image/bmp": ".bmp"}
+CATALOG_COMPONENT = "blk_637dcc698597401c1a8fd711"
+MAX_FILE = 20 * 1024 * 1024
 
 
 def stripped(value):
@@ -230,6 +232,119 @@ class ContentImporter:
             self.fail("原文链接卡片的标题或网址无效。", "UNSUPPORTED_CONTENT")
         return {"name": name, "href": href}
 
+    def source_resources(self, blocks, source):
+        """Materialize a known live catalog and stage independent file copies.
+
+        A File's View cannot be created directly. Its original position becomes
+        a paragraph container; the official file-creation API later supplies its
+        new View. Unknown widget data is never silently discarded.
+        """
+        blocks = copy.deepcopy(blocks)
+        by_id = {block.get("block_id"): block for block in blocks if isinstance(block, dict)}
+        if len(by_id) != len(blocks):
+            self.fail("源文档包含重复或无效内容块。", "INVALID_RESPONSE")
+        extras, files, removed, headings, visited = [], [], set(), [], set()
+
+        def walk(block_id, depth=0):
+            if depth > 100 or block_id in visited or block_id not in by_id:
+                self.fail("源文档层级不完整或包含循环。", "INVALID_RESPONSE")
+            visited.add(block_id)
+            block = by_id[block_id]
+            if block.get("block_type") in range(3, 12):
+                headings.append(block)
+            children = block.get("children", [])
+            if not isinstance(children, list):
+                self.fail("源文档层级格式无效。", "INVALID_RESPONSE")
+            for child in children:
+                walk(self.identifier(child), depth + 1)
+
+        walk(source)
+        if len(visited) != len(blocks):
+            self.fail("源文档存在未读取完整的内容。", "INVALID_RESPONSE")
+        for block in blocks:
+            kind, block_id = block.get("block_type"), block["block_id"]
+            if kind == 40:
+                addon = block.get("add_ons", {})
+                if (not isinstance(addon, dict) or addon.get("component_type_id") != CATALOG_COMPONENT
+                        or addon.get("component_id") not in (None, "") or block.get("children")
+                        or set(addon) - {"component_id", "component_type_id", "record"}):
+                    self.fail("原文包含暂不能完整重建的文档小组件，未省略该内容。", "UNSUPPORTED_CONTENT")
+                try:
+                    settings = json.loads(addon["record"])
+                except (KeyError, ValueError, TypeError):
+                    self.fail("原文目录组件数据无效。", "INVALID_RESPONSE")
+                if (not isinstance(settings, dict) or set(settings) != {
+                        "ignoreCataLogRecordIds", "isShowAllLevel", "showCataLogLevel", "viewType"}
+                        or not isinstance(settings["ignoreCataLogRecordIds"], list)
+                        or any(not isinstance(value, str) for value in settings["ignoreCataLogRecordIds"])
+                        or type(settings["isShowAllLevel"]) is not bool
+                        or type(settings["showCataLogLevel"]) is not int
+                        or not 1 <= settings["showCataLogLevel"] <= 9 or settings["viewType"] != "normal"):
+                    self.fail("原文目录设置暂不支持完整重建，未省略该内容。", "UNSUPPORTED_CONTENT")
+                children = []
+                for heading in headings:
+                    level = heading["block_type"] - 2
+                    if (heading["block_id"] in settings["ignoreCataLogRecordIds"]
+                            or not settings["isShowAllLevel"] and level > settings["showCataLogLevel"]):
+                        continue
+                    elements = heading.get(TEXT_FIELDS[heading["block_type"]], {}).get("elements", [])
+                    if not isinstance(elements, list) or any(not isinstance(e, dict) or set(e) != {"text_run"} for e in elements):
+                        self.fail("原文目录标题不能完整读取。", "UNSUPPORTED_CONTENT")
+                    try:
+                        label = "".join(e["text_run"]["content"] for e in elements)
+                    except (KeyError, TypeError):
+                        self.fail("原文目录标题格式无效。", "INVALID_RESPONSE")
+                    child = "Catalog" + uuid.uuid5(uuid.NAMESPACE_URL, source + "/" + block_id + "/" + heading["block_id"]).hex
+                    if child in by_id:
+                        self.fail("原文目录标识冲突。", "INVALID_RESPONSE")
+                    children.append(child)
+                    extras.append({"block_id": child, "block_type": 2, "text": {"elements": [{"text_run": {
+                        "content": "  " * (level - 1) + label, "text_element_style": {
+                            "link": {"url": "https://www.feishu.cn/docx/" + source + "#" + heading["block_id"]}}}}]}})
+                block.clear()
+                block.update({"block_id": block_id, "block_type": 2,
+                              "text": {"elements": [{"text_run": {"content": "目录"}}]}})
+                if children:
+                    block["children"] = children
+            elif kind == 33:
+                children, view = block.get("children"), block.get("view")
+                if (not isinstance(children, list) or len(children) != 1
+                        or not isinstance(view, dict) or set(view) != {"view_type"}
+                        or type(view["view_type"]) is not int or view["view_type"] not in (1, 2)):
+                    self.fail("原文附件视图暂不能完整重建。", "UNSUPPORTED_CONTENT")
+                original = by_id.get(children[0], {})
+                payload = original.get("file", {})
+                if (original.get("block_type") != 23 or original.get("children")
+                        or not isinstance(payload, dict) or set(payload) != {"name", "token"}
+                        or not isinstance(payload["name"], str) or not 1 <= len(payload["name"]) <= 250
+                        or any(ord(char) < 32 for char in payload["name"])):
+                    self.fail("原文附件信息不完整，未省略该内容。", "UNSUPPORTED_CONTENT")
+                self.identifier(payload["token"])
+                generated_view = "FileView" + uuid.uuid5(uuid.NAMESPACE_URL, source + "/" + original["block_id"]).hex
+                if generated_view in by_id:
+                    self.fail("原文附件标识冲突。", "INVALID_RESPONSE")
+                files.append({"block_id": original["block_id"], "parent_id": block_id,
+                              "view_id": generated_view, "name": payload["name"], "token": payload["token"],
+                              "create_client_token": str(uuid.uuid4()), "bind_client_token": str(uuid.uuid4())})
+                removed.add(original["block_id"])
+                block.clear()
+                block.update({"block_id": block_id, "block_type": 2,
+                              "text": {"elements": [{"text_run": {"content": ""}}]}})
+        return [block for block in blocks if block["block_id"] not in removed] + extras, files
+
+    def add_file_expectations(self, plan, files):
+        # Creation batches stay frozen without deferred File/View nodes. The
+        # full expected tree includes them so final verification cannot lose an
+        # attachment or accidentally accept a reference to the original token.
+        plan["batches"] = copy.deepcopy(plan["batches"])
+        plan["files"] = files
+        for item in files:
+            plan["blocks"][item["parent_id"]]["children"] = [item["view_id"]]
+            plan["blocks"][item["view_id"]] = {"block_id": item["view_id"], "block_type": 33,
+                "children": [item["block_id"]], "view": {"view_type": 1}}
+            plan["blocks"][item["block_id"]] = {"block_id": item["block_id"], "block_type": 23,
+                "file": {"name": item["name"]}}
+
     def sanitize(self, blocks, source, bookmarks=None):
         bookmarks = bookmarks or {}
         by_id, clean, images = {}, {}, []
@@ -378,11 +493,13 @@ class ContentImporter:
         after = self.host.api("GET", path).get("document", {})
         if before.get("revision_id") != after.get("revision_id"):
             self.fail("读取时原文发生修改，请重新准备内容。", "SOURCE_CHANGED")
+        blocks, files = self.source_resources(blocks, source)
         clean, roots, batches, images = self.sanitize(blocks, source, bookmarks)
         plan = {"source": source, "title": title, "revision": before.get("revision_id"),
                 "create_marker": CREATE_MARKER_PREFIX + str(uuid.uuid4()),
                 "blocks": clean, "roots": roots, "batches": batches, "images": images,
                 "batch_index": 0, "bindings": {}, "verified_blocks": [], "verify_page": "", "bookmarks": bookmarks}
+        self.add_file_expectations(plan, files)
         self.add_origin_link(plan, params.get("origin_url", "https://www.feishu.cn/docx/" + source))
         # Keep room for the eventual verification copy inside the state-file limit.
         if len(json.dumps(plan, ensure_ascii=False).encode("utf-8")) > 5 * 1024 * 1024:
@@ -736,6 +853,7 @@ class ContentImporter:
                   for image in plan["images"]]
         return {"title": plan["title"], "source_token": plan["source"], "block_count": len(plan["blocks"]) + 1,
                 "image_count": len(images), "batch_count": len(plan["batches"]), "images": images,
+                "file_count": len(plan.get("files", [])),
                 "stage": record["stage"], "document": record.get("file"),
                 **({"source_url": plan["source_url"]} if plan.get("source_url") else {}),
                 **({"refresh_required": True} if operation and self.refresh_required(operation, record, plan) else {})}
@@ -751,6 +869,92 @@ class ContentImporter:
 
     def image_path(self, operation, block_id):
         return self.store.file("image-" + self.identifier(operation, True) + "-" + self.identifier(block_id) + ".bin")
+
+    def stage_source_file(self, operation, journal, record, plan):
+        item = next((item for item in plan.get("files", []) if not item.get("staged")), None)
+        if item is None:
+            return False
+        if len(item.get("download_attempts", [])) >= 100:
+            self.fail("附件读取多次未完成，请保留当前任务并检查连接。", "FILE_NOT_READY")
+        # Every read attempt gets a new path. An interrupted CLI may have left
+        # partial bytes; never overwrite or trust that old file as complete.
+        name = "attachment-" + operation + "-" + uuid.uuid4().hex + ".bin"
+        path = self.store.file(name)
+        item["download_attempts"] = [*item.get("download_attempts", []), name]
+        self.save(operation, journal, plan)
+        data = self.host.run(["docs", "+media-preview", "--as", "user", "--token", item["token"],
+                              "--output", name])
+        if (not path.is_file() or path.is_symlink() or type(data.get("size_bytes")) is not int
+                or not 0 < data["size_bytes"] <= MAX_FILE or path.stat().st_size != data["size_bytes"]):
+            self.fail("附件未完整读取或超过单附件 20 MiB 限制，未创建不完整文档。", "FILE_NOT_READY")
+        with path.open("rb") as stream:
+            checksum = digest(stream)
+        os.chmod(path, 0o600)
+        item.update({"staged": True, "path": name, "total_size": data["size_bytes"], "sha256": checksum})
+        record["stage"] = "content_prepared"
+        self.save(operation, journal, plan)
+        return True
+
+    def import_file(self, operation, journal, record, plan, token):
+        item = next((item for item in plan.get("files", []) if not item.get("bound")), None)
+        if item is None:
+            return False
+        record["stage"] = "content_images"
+        self.save(operation, journal, plan)
+        if not item.get("created"):
+            parent = self.identifier(plan["bindings"].get(item["parent_id"]))
+            data = self.host.api("POST", "/open-apis/docx/v1/documents/" + token + "/blocks/" + parent + "/children",
+                {"client_token": item["create_client_token"]},
+                {"index": -1, "children": [{"block_type": 23, "file": {"token": ""}}]})
+            children = data.get("children")
+            if (not isinstance(children, list) or len(children) != 1 or not isinstance(children[0], dict)
+                    or children[0].get("block_type") != 33 or children[0].get("parent_id") != parent
+                    or children[0].get("view", {}).get("view_type") != 1
+                    or not isinstance(children[0].get("children"), list) or len(children[0]["children"]) != 1):
+                self.fail("飞书附件创建结果尚未完整核对，请继续当前任务；不会重复创建。", "FILE_CREATE_UNCERTAIN", True)
+            view_id = self.identifier(children[0].get("block_id"))
+            file_id = self.identifier(children[0]["children"][0])
+            if (view_id == file_id or {view_id, file_id} & ({token, plan["source"]} | set(plan["bindings"].values()))):
+                self.fail("飞书附件创建标识冲突，已保留任务。", "FILE_CREATE_UNCERTAIN", True)
+            plan["bindings"].update({item["view_id"]: view_id, item["block_id"]: file_id})
+            item["created"] = True
+        elif not item.get("uploaded_token"):
+            if item.get("upload_attempts", 0) >= 3:
+                self.fail("附件连续三次上传未能确认，请保留当前任务与新文档并检查网络。", "FILE_UPLOAD_UNCERTAIN", True)
+            path = self.store.file(item["path"])
+            with path.open("rb") as stream:
+                if path.stat().st_size != item["total_size"] or digest(stream) != item["sha256"]:
+                    self.fail("本机附件在暂存后发生变化，已停止上传。", "FILE_CONFLICT")
+            item["upload_attempts"] = item.get("upload_attempts", 0) + 1
+            self.save(operation, journal, plan)
+            body = {"file_name": item["name"], "parent_type": "docx_file",
+                    "parent_node": self.identifier(plan["bindings"].get(item["block_id"])),
+                    "size": str(item["total_size"]), "extra": json.dumps({"drive_route_token": token})}
+            try:
+                data = self.host.run(["api", "POST", "/open-apis/drive/v1/medias/upload_all", "--as", "user",
+                                      "--format", "json", "--data", json.dumps(body), "--file", "file=" + path.name], write=True)
+                uploaded = data.get("file_token")
+                if not isinstance(uploaded, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", uploaded):
+                    self.fail("附件上传结果尚未确认，请保留当前任务与新文档。", "FILE_UPLOAD_UNCERTAIN", True)
+                if uploaded == item["token"]:
+                    self.fail("飞书未返回独立附件副本，已停止绑定。", "FILE_UPLOAD_UNCERTAIN", True)
+                item["uploaded_token"] = uploaded
+            except self.Error as error:
+                if not error.uncertain:
+                    item["upload_attempts"] -= 1
+                    self.save(operation, journal, plan)
+                elif item["upload_attempts"] < 3:
+                    self.save(operation, journal, plan)
+                    return True
+                raise
+        else:
+            file_id = self.identifier(plan["bindings"].get(item["block_id"]))
+            self.host.api("PATCH", "/open-apis/docx/v1/documents/" + token + "/blocks/batch_update",
+                {"client_token": item["bind_client_token"]},
+                {"requests": [{"block_id": file_id, "replace_file": {"token": item["uploaded_token"]}}]})
+            item["bound"] = True
+        self.save(operation, journal, plan)
+        return True
 
     @staticmethod
     def image_mime(data):
@@ -958,13 +1162,17 @@ class ContentImporter:
         completed += int(record.get("content_verified") is True)
         completed += plan.get("link_index", 0)
         total = 2 + len(plan["batches"]) + 2 * len(plan["images"]) + len(plan.get("link_batches", []))
+        total += 4 * len(plan.get("files", []))
+        completed += sum(sum(int(bool(item.get(key))) for key in ("staged", "created", "uploaded_token", "bound"))
+                         for item in plan.get("files", []))
         if plan.get("create_marker"):
             total += 3
             completed += int(bool(plan.get("create_preflight"))) + int(bool(plan.get("title_written"))) + int(bool(plan.get("title_verified")))
         return {"stage": "complete" if record.get("content_verified") else record["stage"],
                 "complete": record.get("content_verified") is True, "document": record.get("file"),
                 "progress": {"completed": completed, "total": total, "phase": record["stage"]},
-                "counts": {"blocks": len(plan["blocks"]) + 1, "images": len(plan["images"])},
+                "counts": {"blocks": len(plan["blocks"]) + 1, "images": len(plan["images"]),
+                           **({"files": len(plan["files"])} if plan.get("files") else {})},
                 **({"deferred_until": plan["create_next_check"] * 1000}
                    if record.get("stage") == "content_recovering" and plan.get("create_next_check", 0) > time.time() else {})}
 
@@ -1069,6 +1277,8 @@ class ContentImporter:
         if any(not image.get("staged") for image in plan["images"]):
             self.fail("请先完整下载并暂存全部图片，再创建文档。", "IMAGES_NOT_READY")
         self.restore_legacy_image_dimensions(operation, journal, plan)
+        if self.stage_source_file(operation, journal, record, plan):
+            return self.result(record, plan)
         if not record.get("copied_token"):
             if record.get("stage") in ("content_create_pending", "content_create_uncertain", "content_recovering"):
                 return self.recover_creation(operation, journal, record, plan)
@@ -1134,6 +1344,8 @@ class ContentImporter:
             plan["bindings"].update({key: mapping[key] for key in expected})
             plan["batch_index"] += 1
             self.save(operation, journal, plan)
+            return self.result(record, plan)
+        if self.import_file(operation, journal, record, plan, token):
             return self.result(record, plan)
         for image in plan["images"]:
             if image.get("bound") or image.get("uploaded_token"):
@@ -1368,6 +1580,11 @@ class ContentImporter:
                 for key in ("width", "height", "scale"):
                     if key in image:
                         wanted["image"][key] = image[key]
+            if wanted["block_type"] == 23:
+                item = next(item for item in plan.get("files", []) if item["block_id"] == source_id)
+                if not item.get("bound") or item.get("uploaded_token") == item["token"]:
+                    self.fail("附件尚未独立保存，暂不迁入知识库。", "CONTENT_MISMATCH")
+                wanted["file"]["token"] = item["uploaded_token"]
             actual = copy.deepcopy(target.get(mapping[source_id]))
             try:
                 apply_block_defaults(wanted)

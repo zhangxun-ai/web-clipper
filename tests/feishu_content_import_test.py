@@ -60,11 +60,21 @@ class ImportCLI:
         self.failure, self.revision = None, 1
         self.bookmarks = {}
         self.created_title = ""
+        self.attachments = {}
+        self.file_cache = {}
 
     def __call__(self, argv, **kwargs):
         self.calls.append(argv)
         self.assert_user(argv)
         if argv[1] == "docs":
+            if argv[2] == "+media-preview":
+                token = argv[argv.index("--token") + 1]
+                path = Path(argv[argv.index("--output") + 1])
+                assert not path.is_absolute() and len(path.parts) == 1
+                content = self.attachments[token]
+                (Path(kwargs["cwd"]) / path).write_bytes(content)
+                return subprocess.CompletedProcess(argv, 0, json.dumps({"ok": True, "data": {
+                    "size_bytes": len(content), "content_type": "video/mp4"}}), "")
             self.assert_v2(argv)
             doc = argv[argv.index("--doc") + 1]
             if argv[2] == "+fetch":
@@ -125,18 +135,38 @@ class ImportCLI:
                 self.cache[key] = {"block_id_relations": [{"temporary_block_id": key, "block_id": value}
                                                          for key, value in mapping.items()]}
             data = self.cache[key]
+        elif path.endswith("/children") and method == "POST":
+            parent = path.split("/")[-2]
+            key = query["client_token"]
+            if key not in self.file_cache:
+                assert body == {"index": -1, "children": [{"block_type": 23, "file": {"token": ""}}]}
+                view_id, file_id = "NewFileView" + str(len(self.file_cache)), "NewFile" + str(len(self.file_cache))
+                self.target[parent]["children"] = [view_id]
+                view = {"block_id": view_id, "block_type": 33, "parent_id": parent,
+                        "children": [file_id], "view": {"view_type": 1}}
+                self.target[view_id] = view
+                self.target[file_id] = {"block_id": file_id, "block_type": 23, "parent_id": view_id, "file": {"token": ""}}
+                self.file_cache[key] = {"children": [copy.deepcopy(view)]}
+            data = self.file_cache[key]
         elif path.endswith("/medias/upload_all"):
-            assert body["parent_node"] == "NewImage"
             assert json.loads(body["extra"])["drive_route_token"] == "Created"
             upload_name = Path(argv[argv.index("--file") + 1].split("=", 1)[1])
             assert not upload_name.is_absolute() and len(upload_name.parts) == 1
             assert (Path(kwargs["cwd"]) / upload_name).is_file()
-            data = {"file_token": "UploadedImage"}
+            if body["parent_type"] == "docx_file":
+                assert body["parent_node"].startswith("NewFile")
+                self.target[body["parent_node"]]["file"]["name"] = body["file_name"]
+                data = {"file_token": "Uploaded" + body["parent_node"]}
+            else:
+                assert body["parent_type"] == "docx_image" and body["parent_node"] == "NewImage"
+                data = {"file_token": "UploadedImage"}
         elif path.endswith("/blocks/batch_update"):
             for request in body["requests"]:
                 block = self.target[request["block_id"]]
                 if "replace_image" in request:
                     block["image"].update(request["replace_image"])
+                elif "replace_file" in request:
+                    block["file"].update(request["replace_file"])
                 elif "update_text_elements" in request:
                     block["text"]["elements"] = copy.deepcopy(request["update_text_elements"]["elements"])
             data = {}
@@ -204,6 +234,159 @@ class ContentTests(unittest.TestCase):
         origin = assert_origin_paragraph(self, plan, "https://www.feishu.cn/docx/Source", self.cli.target)
         self.assertEqual(self.cli.target["Created"]["children"], [origin, *body_roots])
         return plan
+
+    def add_catalog_and_file(self):
+        self.cli.source[0]["children"] = ["Catalog", "Heading", *self.cli.source[0]["children"], "FilePosition"]
+        self.cli.source.extend([
+            {"block_id": "Catalog", "block_type": 40, "add_ons": {"component_id": "",
+             "component_type_id": "blk_637dcc698597401c1a8fd711", "record": json.dumps({
+                 "ignoreCataLogRecordIds": [], "isShowAllLevel": False, "showCataLogLevel": 3, "viewType": "normal"})}},
+            {"block_id": "Heading", "block_type": 3, "heading1": {"elements": [{"text_run": {"content": "章节"}}]}},
+            {"block_id": "FilePosition", "block_type": 33, "children": ["Video"], "view": {"view_type": 2}},
+            {"block_id": "Video", "block_type": 23, "file": {"name": "视频.mp4", "token": "OriginalVideo"}}])
+        self.cli.attachments["OriginalVideo"] = b"\x00\x00\x00\x18ftypmp42" + b"video-bytes" * 100
+
+    def finish_resources(self):
+        for _ in range(40):
+            result = self.step()
+            self.assertTrue(result["ok"], result)
+            if result["data"]["complete"]:
+                return result
+        self.fail("Resource import did not complete")
+
+    def test_catalog_and_video_preserve_position_and_independently_uploaded_bytes(self):
+        self.add_catalog_and_file()
+        summary = self.prepare()
+        self.assertEqual(summary["file_count"], 1)
+        self.stage()
+        result = self.finish_resources()
+        self.assertEqual(result["data"]["counts"]["files"], 1)
+        plan = self.host.content.read(self.operation)[2]
+        item = plan["files"][0]
+        self.assertNotEqual(item["uploaded_token"], item["token"])
+        self.assertEqual((self.directory / item["path"]).read_bytes(), self.cli.attachments["OriginalVideo"])
+        video = self.cli.target[plan["bindings"]["Video"]]
+        self.assertEqual(video["file"], {"name": "视频.mp4", "token": item["uploaded_token"]})
+        parent = self.cli.target[plan["bindings"]["FilePosition"]]
+        view_id = plan["bindings"][item["view_id"]]
+        self.assertEqual(parent["children"], [view_id])
+        self.assertEqual(self.cli.target[view_id]["children"], [video["block_id"]])
+        roots = self.cli.target["Created"]["children"]
+        self.assertEqual(roots[-1], parent["block_id"])
+        catalog = self.cli.target[plan["bindings"]["Catalog"]]
+        entry = self.cli.target[catalog["children"][0]]["text"]["elements"][0]["text_run"]
+        self.assertEqual(entry["content"], "章节")
+        self.assertEqual(entry["text_element_style"]["link"]["url"], "https://www.feishu.cn/docx/Created#NewHeading")
+        descendants = [json.loads(c[c.index("--data") + 1])["descendants"]
+                       for c in self.cli.calls if c[1:3] == ["api", "POST"] and c[3].endswith("/descendant")]
+        self.assertTrue(all(block["block_type"] not in (23, 33, 40) for batch in descendants for block in batch))
+
+    def test_unknown_widget_or_catalog_settings_rejected_before_remote_creation(self):
+        for mutation in (lambda addon: addon.update(component_type_id="UnknownWidget"),
+                         lambda addon: addon.update(record='{"unknown":"would be lost"}')):
+            with self.subTest(mutation=mutation):
+                self.cli = ImportCLI()
+                self.host.runner = self.cli
+                self.add_catalog_and_file()
+                mutation(self.cli.source[-4]["add_ons"])
+                result = self.call("prepare_content", token="Source")
+                self.assertEqual(result["code"], "UNSUPPORTED_CONTENT")
+                self.assertTrue(all(c[2] == "GET" for c in self.cli.calls))
+
+    def test_file_create_timeout_replays_same_uuid_and_does_not_duplicate(self):
+        self.add_catalog_and_file(); self.prepare(); self.stage()
+        self.advance_until(lambda plan: plan["batch_index"] == len(plan["batches"]))
+        self.cli.failure = ("after", subprocess.TimeoutExpired(["lark-cli"], 30))
+        result = self.step()
+        self.assertTrue(result["uncertain"])
+        self.host = native.NativeHost("/mock/lark-cli", self.directory, self.cli)
+        self.finish_resources()
+        creates = [c for c in self.cli.calls if c[1:3] == ["api", "POST"] and c[3].endswith("/children")]
+        self.assertEqual(len(creates), 2)
+        self.assertEqual(creates[0], creates[1])
+        self.assertEqual(len(self.cli.file_cache), 1)
+
+    def test_changed_staged_file_never_uploaded_or_reported_complete(self):
+        self.add_catalog_and_file(); self.prepare(); self.stage()
+        plan = self.advance_until(lambda plan: plan["files"][0].get("created"))
+        (self.directory / plan["files"][0]["path"]).write_bytes(b"changed")
+        result = self.step()
+        self.assertEqual(result["code"], "FILE_CONFLICT")
+        self.assertFalse(any(c[1:3] == ["api", "POST"] and c[3].endswith("upload_all") for c in self.cli.calls))
+
+    def test_attachment_download_size_mismatch_stops_before_document_creation(self):
+        self.add_catalog_and_file(); self.prepare()
+        for offset in range(0, len(self.png), 196608):
+            self.assertTrue(self.chunk(offset)["ok"])
+        original = self.cli.__call__
+        def runner(argv, **kwargs):
+            result = original(argv, **kwargs)
+            if argv[1:3] == ["docs", "+media-preview"]:
+                data = json.loads(result.stdout)
+                data["data"]["size_bytes"] += 1
+                result.stdout = json.dumps(data)
+            return result
+        self.host.runner = runner
+        self.assertEqual(self.step()["code"], "FILE_NOT_READY")
+        self.assertFalse(self.cli.target)
+
+    def test_final_file_name_and_independent_token_are_verified(self):
+        self.add_catalog_and_file(); self.prepare(); self.stage()
+        plan = self.advance_until(lambda plan: plan["files"][0].get("bound"))
+        self.cli.target[plan["bindings"]["Video"]]["file"]["name"] = "wrong.mp4"
+        for _ in range(10):
+            result = self.step()
+            if not result["ok"]:
+                break
+        self.assertEqual(result["code"], "CONTENT_MISMATCH")
+        self.assertFalse(self.host.content.read(self.operation)[1].get("content_verified"))
+
+    def test_unknown_file_upload_results_are_bounded_and_never_bound(self):
+        self.add_catalog_and_file(); self.prepare(); self.stage()
+        self.advance_until(lambda plan: plan["files"][0].get("created"))
+        original = self.cli.__call__
+        def runner(argv, **kwargs):
+            result = original(argv, **kwargs)
+            if argv[1:3] == ["api", "POST"] and argv[3].endswith("/medias/upload_all"):
+                result.stdout = json.dumps({"ok": True, "data": {}})
+            return result
+        self.host.runner = runner
+        self.assertTrue(self.step()["ok"])
+        self.assertTrue(self.step()["ok"])
+        result = self.step()
+        self.assertEqual(result["code"], "FILE_UPLOAD_UNCERTAIN")
+        self.assertTrue(result["uncertain"])
+        plan = self.host.content.read(self.operation)[2]
+        self.assertEqual(plan["files"][0]["upload_attempts"], 3)
+        count = len(self.cli.calls)
+        self.assertEqual(self.step()["code"], "FILE_UPLOAD_UNCERTAIN")
+        self.assertEqual(len(self.cli.calls), count)
+        self.assertFalse(plan["files"][0].get("bound"))
+
+    def test_timed_out_attachment_read_keeps_snapshot_and_does_not_reuse_partial_bytes(self):
+        self.add_catalog_and_file(); self.prepare()
+        for offset in range(0, len(self.png), 196608):
+            self.assertTrue(self.chunk(offset)["ok"])
+        original = self.cli.__call__
+        def runner(argv, **kwargs):
+            if argv[1:3] == ["docs", "+media-preview"]:
+                (Path(kwargs["cwd"]) / argv[argv.index("--output") + 1]).write_bytes(b"partial")
+                raise subprocess.TimeoutExpired(argv, 30)
+            return original(argv, **kwargs)
+        self.host.runner = runner
+        result = self.step()
+        self.assertEqual(result["code"], "CLI_TIMEOUT")
+        self.assertFalse(self.cli.target)
+        self.host.runner = self.cli
+        self.assertTrue(self.step()["ok"])
+        plan = self.host.content.read(self.operation)[2]
+        item = plan["files"][0]
+        self.assertEqual(len(item["download_attempts"]), 2)
+        self.assertNotEqual(item["download_attempts"][0], item["path"])
+        self.assertEqual((self.directory / item["download_attempts"][0]).read_bytes(), b"partial")
+        self.assertEqual((self.directory / item["path"]).read_bytes(), self.cli.attachments["OriginalVideo"])
+        self.assertEqual(plan["revision"], 1)
+        self.assertFalse(self.cli.target)
 
     def test_native_bookmark_recreated_in_original_position_and_read_back(self):
         for index in (0, 1, 3):
