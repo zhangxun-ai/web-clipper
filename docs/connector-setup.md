@@ -40,14 +40,14 @@ npm install --prefix "$HOME/Library/Application Support/FeishuClipper/tools" @la
 
 ### 2. 下载经过校验的连接器
 
-固定源码提交：`675356047546c7065af62f7f7d7a68e7c653f2e5`。此版本保留原文入口，并按实际图片格式修正错误的响应类型，支持恢复尚未上传的旧图片分块；使用旧固定源码安装的连接器需更新到此版本。连接器直接指向当前仓库源码的本机安装无需重新注册。
+固定源码提交：`00798122c9b23ab217c7e9e153b19dd5d6eabe20`。此版本保留原文入口、实际图片格式识别和旧图片分块恢复，并增加原生目录组件转换与附件独立上传；使用旧固定源码安装的连接器需更新到此版本。连接器直接指向当前仓库源码的本机安装无需重新注册。
 
-2026-09-16 同步验证：243 项 JavaScript、168 项 Python 回归及完整 `npm run test:browser` 通过；安装向导和手动说明的三个文件 SHA-256 与上述固定提交一致。自动测试模拟飞书响应，不将其作为真实远程写入验收。
+2026-09-16 历史验证（旧固定版本 `6753560`）：243 项 JavaScript、168 项 Python 回归及完整 `npm run test:browser` 通过；当时安装向导和手动说明的三个文件 SHA-256 与旧固定提交一致。自动测试模拟飞书响应，不将其作为真实远程写入验收。
 
 下载地址前缀：
 
 ```text
-https://raw.githubusercontent.com/zhangxun-ai/web-clipper/675356047546c7065af62f7f7d7a68e7c653f2e5/helper/
+https://raw.githubusercontent.com/zhangxun-ai/web-clipper/00798122c9b23ab217c7e9e153b19dd5d6eabe20/helper/
 ```
 
 只下载以下三个文件，并逐个核对 SHA-256：
@@ -55,10 +55,10 @@ https://raw.githubusercontent.com/zhangxun-ai/web-clipper/675356047546c7065af62f
 | 文件 | SHA-256 |
 | --- | --- |
 | `feishu_native_host.py` | `cb9bb7c50e08911cff39fe57adf343551e8e55921ebb3534d25fbb5194a94ece` |
-| `feishu_content_import.py` | `7b856a2c8904066de0f0dfe5fb4ee602073548c20166a8904c2e25a99e43d60a` |
+| `feishu_content_import.py` | `83cd58a78cc06ccbd65f04c3d98e3f0b5d29dda4f99a9397234fcca7bbd92d8b` |
 | `install_feishu_native_host.py` | `10c0b28107df65125b924fd5a1d075e1e375adc84dbc8634a835fb4915c6aef3` |
 
-持久保存到 `~/Library/Application Support/FeishuClipper/source/675356047546c7065af62f7f7d7a68e7c653f2e5/helper/`。下载先写本次临时文件，校验通过才进入持久目录；已存在的文件先核对，不能覆盖未知内容。下载或校验失败时明确停止，不能改用未校验的 main 分支。
+持久保存到 `~/Library/Application Support/FeishuClipper/source/00798122c9b23ab217c7e9e153b19dd5d6eabe20/helper/`。下载先写本次临时文件，校验通过才进入持久目录；已存在的文件先核对，不能覆盖未知内容。下载或校验失败时明确停止，不能改用未校验的 main 分支。
 
 此目录是连接器的运行依赖，不是临时下载目录；安装后不能删除或随意改名。这个位置与用户的 GitHub 克隆目录、浏览器商店安装目录无关。
 
@@ -106,3 +106,6 @@ lark-cli config init --new
 2026-09-16 验证：同步新版连接器固定提交与文件校验值，224 项 JavaScript、158 项 Python 及首次连接浏览器回归通过。新版真实飞书写入尚未重新验收。
 
 2026-09-08 旧固定版本验证：JavaScript 回归、真实 Chromium 中的提示词复制与窄屏布局通过；从 GitHub 实际下载当时的三份固定源码并核对 SHA-256，在隔离的用户目录注册 Chrome／Edge／Dia、重复安装，并通过真实本机协议读取 CLI 1.0.88，错误扩展 ID 被拒绝。测试复用了本机已有 Python／Node／CLI，没有在全新 Mac 上从零安装这些依赖，也没有重新进行飞书授权或真实图文写入。
+
+
+2026-10-30 源码同步：目录组件及独立附件导入已记录在固定提交 `00798122c9b23ab217c7e9e153b19dd5d6eabe20`，安装向导及本页同步该提交和三份文件的实际 SHA-256。发布前核对固定提交中的文件及 GitHub 下载字节；不跳过或放宽固定源码一致性检查。此处仅更新源码安装入口，不代表商店发版、真实账号授权或真实飞书写入已验收。
