@@ -180,6 +180,8 @@ docx:document:write_only docs:document.media:upload space:document:retrieve offl
 
 ## 验证
 
+2026-10-30 GitHub 同步复验：固定连接器更新为 `00798122c9b23ab217c7e9e153b19dd5d6eabe20`，三份文件与该提交逐字节一致，安装说明及 SHA-256 已同步。此前固定源码一致性失败已解决；全量 JavaScript 309 项、飞书 Python 179 项及完整 `npm run test:browser`（含公众号 Python 12 项、X 与 70 MiB 大文档）通过，语法与补丁检查通过。真实飞书与供应商响应使用测试数据；未执行真实写入、收费 live 查询、部署或商店发版。
+
 2026-10-29 普通 X 推文 SVG 复发修复：最新 v9 在用户样本 `https://x.com/idoubicc/status/2015691086459768855` 的真实 DOM 上稳定复现 `UNSUPPORTED_CONTENT`，根因是 v9 仅适配 Article，普通推文仍进入通用网页选择及未经适配的账号 SVG。v10 统一定向选区和清理后，真实浏览器捕获 14 块（含根）、1 张正文引用配图；主文逐字及换行匹配，七条步骤、引用预览和可核验的引用原文链接保留，评论未混入。图片通过正式读取器下载并解码，85,046 字节；清理前后图片引用无遗漏。上一条 Article 样本同时回归为 198 块、31 张图，两个样本均通过正式 `build_web_plan` 纯本地校验（分别一批、两批），未调用真实飞书写入。
 
 新增 `tests/browser/x-post.cjs`、`x-extension.cjs`，与 `x-article.cjs` 一起纳入 `npm run test:ui`。DOM 回归覆盖短推文、长评论干扰、引用 Article、真假徽章、轮播、空/未展开/缺失目标、隐藏/重复目标、Twitter 与 i/web URL、标题和日期归属。完整 MV3 回归使用原 manifest，先验证无 X 永久访问权限，再通过 Chromium `Extensions.triggerAction` 触发真实扩展入口取得 activeTab；实际注入、CORS、图片解码、storage 和保存页运行，仅 Native/飞书响应用 fixture。真实正文 SVG 在创建前停止；移除该不支持资源并模拟旧 v9 后，同一失败请求升级恢复，3 张图片原字节与真实像素进入暂存，只创建一次，刷新结果页不重复创建。
