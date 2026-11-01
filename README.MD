@@ -1,3 +1,9 @@
+<!-- project-cover:20261101:start -->
+<p align="center">
+  <img src="assets/project-cover-20261101.webp" alt="web-clipper — AI-designed project cover" width="1280" />
+</p>
+<!-- project-cover:20261101:end -->
+
 # web-clipper
 
 网页剪存：保存网页和在线文档的正文图片到飞书知识库、Obsidian 或本地。

@@ -1,0 +1,14 @@
+{
+  "project": "zhangxun-ai/web-clipper",
+  "createdOn": "2026-11-01",
+  "generator": "GPT Image via built-in imagegen",
+  "template": "Poster Layout System / poster-layout-system",
+  "purpose": "Abstract project branding cover, not a screenshot or proof of product output",
+  "prompt": "用途：GitHub README 顶部封面及个人网站 150px 宽项目卡片。Poster Layout System 单张最终成品横版海报，16:9。统一系列：近黑炭色背景，高级独立技术刊物气质，现代瑞士字体，暖象牙大标题，真实雕塑材质，克制的胶片颗粒与精密线条。主题物体只有一个强焦点，以左侧大标题和右侧主体形成平衡；主体和标题均在左右 8% 安全区域内，标题足够大，底部 15% 低细节区域留给网站叠加名称。大面积深色留白，不做软件界面，不做应用截图。文字逐字准确，不额外添加口号、数据、序号、徽章、水印、说明或小字。无浏览器/设备外壳，无伪造仪表盘，无卡片网格，无机器人、光球、星空，无第三方商标。不要边框和圆角。\n项目 web-clipper：网页剪存，把网页和在线文档的正文、图片保存到个人知识库和本地。主视觉为一枚由磨砂森林绿金属折成的叶片书签，夹住两张微卷的暖白纸页。叶脉以细腻雕刻呈现，纸页的剪裁轮廓优雅，有少量不带文字的压纹排版线。微距静物式精细材质、侧光、非常克制的翡翠绿与暖白，与深黑背景形成简练对比。仅使用准确标题 \"web-clipper\"，左侧单行或两行 web- / clipper；不要中文和额外文字。不要剪刀、购物袋或夸张粒子光带。",
+  "cover": {
+    "filename": "project-cover-20261101.webp",
+    "width": 1280,
+    "height": 720,
+    "sha256": "868c5b87c037960693c444364bfb78389323a2ab2c2f04f935f67171046325b8"
+  }
+}
