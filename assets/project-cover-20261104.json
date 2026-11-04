@@ -1,0 +1,14 @@
+{
+  "project": "zhangxun-ai/web-clipper",
+  "createdOn": "2026-11-04",
+  "generator": "GPT Image via built-in imagegen",
+  "template": "Poster Layout System / poster-layout-system",
+  "purpose": "User-selected README project cover; conceptual illustration, not an actual product screenshot",
+  "prompt": "Use case: ads-marketing. 生成一张完整成品的中文 GitHub README 横向封面，宽高比 16:9，高清。产品名「网页剪存」，英文小标 web-clipper。采用 Poster Layout System 海报排版系统（case345）的清楚信息层级。这是一款将网页和在线文档正文及图片保存到飞书知识库、Obsidian 或本地 Markdown 的浏览器插件。设计方向 A：清爽现代的产品说明型封面。暖白底、森林绿主色、微量明黄色指引，平面设计配精细的轻立体文档插画，强留白、高级编辑设计。左上小型叶片书签标志及「网页剪存 / web-clipper」；左侧超大黑绿中文标题，严格两行「把网页好内容」「存进自己的知识库」。下方副文案「正文与图片一起保存」。右侧用一个容易理解的精致视觉展示网页文章卡片经过小小叶片书签夹，流向三张目标卡片，卡片分别标注「飞书知识库」「Obsidian」「本地 Markdown」，每个带图标和文档缩略图，箭头方向准确，网页缩略图中有实际配图和文本线条。底部一行较小文字「网页 · 公众号 · 飞书文档 · Google Docs」。视觉主体不是流程图报告，而是有记忆点的产品封面。所有核心文字手机缩略图依然清晰，中文正确，禁止额外宣传承诺、AI 功能、自动同步、无需配置、虚假截图、二维码、水印。仅一张完整封面，不要样机外框，不要多方案拼图。",
+  "cover": {
+    "filename": "project-cover-20261104.png",
+    "width": 1672,
+    "height": 941,
+    "sha256": "1869dd91288b5dc6218679efa5f9865785edadd81a83325882488ef7920ab162"
+  }
+}

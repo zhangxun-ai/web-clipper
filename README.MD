@@ -1,8 +1,8 @@
-<!-- project-cover:20261101:start -->
+<!-- project-cover:20261104:start -->
 <p align="center">
-  <img src="assets/project-cover-20261101.webp" alt="web-clipper — AI-designed project cover" width="1280" />
+  <img src="assets/project-cover-20261104.png" alt="网页剪存：将网页正文与图片保存到飞书知识库、Obsidian 或本地 Markdown" width="1280" />
 </p>
-<!-- project-cover:20261101:end -->
+<!-- project-cover:20261104:end -->
 
 # web-clipper
 
